@@ -74,7 +74,7 @@ with col_stop:
 with col_clear:
     if st.button("🗑️ XÓA CACHE", use_container_width=True):
         st.session_state.mqtt_df = pd.DataFrame()
-        st.session_state.last_uploaded_file = None  # Reset trạng thái file uploader
+        st.session_state.last_uploaded_file = None  
         st.rerun()
 
 if st.session_state.is_running:
@@ -153,7 +153,6 @@ def evaluate_status(vpd, temp, humi, station_id, low_t, high_t):
 def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     if df_new.empty:
         return
-    # Nếu không kích hoạt ignore_running_check và hệ thống đang dừng, bỏ qua dữ liệu xung nhịp mô phỏng
     if not ignore_running_check and "is_running" in st.session_state and not st.session_state.is_running:
         return
 
@@ -161,20 +160,37 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     high_t = st.session_state.high_threshold
     df_normalized = df_new.copy()
 
-    if 'time' in df_normalized.columns:
-        df_normalized.rename(columns={'time': 'Thời gian'}, inplace=True)
-    if 'station' in df_normalized.columns:
-        df_normalized.rename(columns={'station': 'STT'}, inplace=True)
-    if 'tempKK' in df_normalized.columns:
-        df_normalized.rename(columns={'tempKK': 'Nhiệt độ'}, inplace=True)
-    if 'humiKK' in df_normalized.columns:
-        df_normalized.rename(columns={'humiKK': 'Độ ẩm'}, inplace=True)
-    if 'Nhiệt Độ' in df_normalized.columns:
-        df_normalized.rename(columns={'Nhiệt Độ': 'Nhiệt độ'}, inplace=True)
+    # Tạo từ điển map tên cột một cách đồng bộ nhất để tránh tạo cột trùng lặp
+    rename_dict = {}
+    for col in df_normalized.columns:
+        col_str = str(col).strip()
+        if col_str in ['time', 'Thời gian']:
+            rename_dict[col] = 'Thời gian'
+        elif col_str in ['station', 'STT']:
+            rename_dict[col] = 'STT'
+        elif col_str in ['tempKK', 'Nhiệt Độ', 'Nhiệt độ']:
+            rename_dict[col] = 'Nhiệt độ'
+        elif col_str in ['humiKK', 'Độ ẩm']:
+            rename_dict[col] = 'Độ ẩm'
+
+    df_normalized.rename(columns=rename_dict, inplace=True)
+    
+    # SỬA LỖI QUAN TRỌNG: Loại bỏ triệt để các cột trùng tên sau khi đổi tên (Fix lỗi arg must be a list...)
+    df_normalized = df_normalized.loc[:, ~df_normalized.columns.duplicated()]
+
+    # Đảm bảo các cột tối thiểu phải tồn tại
+    if 'Thời gian' not in df_normalized.columns:
+        df_normalized['Thời gian'] = datetime.now().strftime("%H:%M:%S")
+    if 'STT' not in df_normalized.columns:
+        df_normalized['STT'] = "1"
+    if 'Nhiệt độ' not in df_normalized.columns:
+        df_normalized['Nhiệt độ'] = 28.0
+    if 'Độ ẩm' not in df_normalized.columns:
+        df_normalized['Độ ẩm'] = 70.0
 
     df_normalized['STT'] = df_normalized['STT'].astype(str)
-    df_normalized['Nhiệt độ'] = pd.to_numeric(df_normalized['Nhiệt độ'])
-    df_normalized['Độ ẩm'] = pd.to_numeric(df_normalized['Độ ẩm'])
+    df_normalized['Nhiệt độ'] = pd.to_numeric(df_normalized['Nhiệt độ'], errors='coerce').fillna(28.0)
+    df_normalized['Độ ẩm'] = pd.to_numeric(df_normalized['Độ ẩm'], errors='coerce').fillna(70.0)
 
     def scale_value(row, col_name):
         val = row[col_name]
@@ -210,7 +226,8 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     else:
         updated_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True)
         updated_df = updated_df.drop_duplicates(subset=['STT', 'Thời gian'])
-        st.session_state.mqtt_df = updated_df.tail(500)
+        # Mở rộng tail lên 20.000 dòng để chứa thoải mái dữ liệu lớn từ file tải lên
+        st.session_state.mqtt_df = updated_df.tail(20000)
 
 # =====================================================================
 # KHỞI TẠO DỮ LIỆU LỊCH SỬ ĐỂ VẼ BIỂU ĐỒ NGAY LẬP TỨC
@@ -321,7 +338,7 @@ else:
     st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
 
 # =====================================================================
-# 📥 NHẬP DỮ LIỆU TỪ FILE (ĐỌC ĐỒNG BỘ VÀO REAL-TIME)
+# 📥 NHẬP DỮ LIỆU TỪ FILE (Cơ chế đọc đa luồng an toàn)
 # =====================================================================
 st.subheader("📥 Nhập Dữ Liệu Ngoài Từ File")
 uploaded_file = st.file_uploader(
@@ -330,25 +347,37 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Nếu phát hiện file mới tải lên chưa được xử lý ở chu kỳ trước
     if st.session_state.last_uploaded_file != uploaded_file.name:
         try:
             if uploaded_file.name.endswith('.csv'):
                 df_upload = pd.read_csv(uploaded_file)
             else:
-                df_upload = pd.read_json(uploaded_file)
+                # Thử đọc theo nhiều cấu trúc cấu hình JSON khác nhau để bao quát file lớn
+                try:
+                    df_upload = pd.read_json(uploaded_file)
+                except Exception:
+                    try:
+                        uploaded_file.seek(0)
+                        df_upload = pd.read_json(uploaded_file, lines=True)
+                    except Exception:
+                        uploaded_file.seek(0)
+                        raw_data = json.load(uploaded_file)
+                        if isinstance(raw_data, dict) and "data" in raw_data:
+                            df_upload = pd.DataFrame(raw_data["data"])
+                        elif isinstance(raw_data, dict):
+                            df_upload = pd.DataFrame.from_dict(raw_data, orient='index')
+                        else:
+                            df_upload = pd.DataFrame(raw_data)
                 
             if not df_upload.empty:
-                # Nạp vào database chính, tắt báo động Discord tránh spam, bỏ qua kiểm tra trạng thái dừng hệ thống
                 process_incoming_data(df_upload, silent=True, ignore_running_check=True)
                 st.session_state.last_uploaded_file = uploaded_file.name
                 st.rerun()
         except Exception as e:
-            st.error(f"❌ Lỗi định dạng khi đọc file: {e}. Vui lòng kiểm tra lại cấu trúc các cột.")
+            st.error(f"❌ Lỗi định dạng dữ liệu cấu trúc file: {e}. Vui lòng kiểm tra lại cột.")
             
-    # Hiển thị trạng thái nạp thành công ổn định dưới ô upload
     if st.session_state.last_uploaded_file == uploaded_file.name:
-        st.success(f"✅ Đã nạp thành công dữ liệu từ file `{uploaded_file.name}` vào bộ nhớ biểu đồ real-time!")
+        st.success(f"✅ Đã giải mã thành công file `{uploaded_file.name}` vào biểu đồ tuyến tính real-time!")
 
 # =====================================================================
 # BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG TỰ ĐỘNG THEO CHU KỲ TRẠM ĐANG QUÉT
@@ -362,7 +391,6 @@ if not chart_df.empty and len(chart_df) > 0:
     metric_map = {"Chỉ số VPD (kPa)": "VPD", "Nhiệt độ (°C)": "Nhiệt độ", "Độ ẩm (%)": "Độ ẩm"}
     target_column = metric_map[select_metric]
     
-    # --- CHUYỂN ĐỔI SANG TRỤC DATETIME TUYẾN TÍNH ĐỂ KẾT NỐI ĐƯỜNG THẲNG ---
     today_str = datetime.now().strftime("%Y-%m-%d")
     def to_plotly_dt(x):
         x_str = str(x).strip()
@@ -374,7 +402,6 @@ if not chart_df.empty and len(chart_df) > 0:
     chart_df = chart_df.dropna(subset=['Thời gian_Plotly'])
     chart_df = chart_df.sort_values(by="Thời gian_Plotly")
 
-    # TỰ ĐỘNG LỌC: Chỉ lấy lịch sử của trạm vừa quét xong (active_station)
     plot_df = chart_df[chart_df["STT"] == str(active_station)].copy()
     
     if not plot_df.empty:
