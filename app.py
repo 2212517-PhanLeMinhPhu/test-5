@@ -43,6 +43,9 @@ if "last_processed_idx" not in st.session_state:
 if "discord_webhook_url" not in st.session_state:
     st.session_state.discord_webhook_url = ""
 
+if "last_uploaded_file" not in st.session_state:
+    st.session_state.last_uploaded_file = None
+
 STATIONS_LIST = ["1", "2", "3", "4", "5"]
 
 # =====================================================================
@@ -71,6 +74,7 @@ with col_stop:
 with col_clear:
     if st.button("🗑️ XÓA CACHE", use_container_width=True):
         st.session_state.mqtt_df = pd.DataFrame()
+        st.session_state.last_uploaded_file = None  # Reset trạng thái file uploader
         st.rerun()
 
 if st.session_state.is_running:
@@ -146,10 +150,11 @@ def evaluate_status(vpd, temp, humi, station_id, low_t, high_t):
     else:
         return ("Môi trường lý tưởng", f"VPD điểm vàng ({vpd} kPa).", "Giữ nguyên chế độ.")
 
-def process_incoming_data(df_new, silent=False):
+def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     if df_new.empty:
         return
-    if "is_running" in st.session_state and not st.session_state.is_running:
+    # Nếu không kích hoạt ignore_running_check và hệ thống đang dừng, bỏ qua dữ liệu xung nhịp mô phỏng
+    if not ignore_running_check and "is_running" in st.session_state and not st.session_state.is_running:
         return
 
     low_t = st.session_state.low_threshold
@@ -227,7 +232,7 @@ def generate_initial_history():
 
 if st.session_state.mqtt_df.empty:
     history_df = generate_initial_history()
-    process_incoming_data(history_df, silent=True)
+    process_incoming_data(history_df, silent=True, ignore_running_check=True)
 
 # --- MQTT LISTENER ---
 def on_message(client, userdata, message):
@@ -316,13 +321,42 @@ else:
     st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
 
 # =====================================================================
+# 📥 NHẬP DỮ LIỆU TỪ FILE (ĐỌC ĐỒNG BỘ VÀO REAL-TIME)
+# =====================================================================
+st.subheader("📥 Nhập Dữ Liệu Ngoài Từ File")
+uploaded_file = st.file_uploader(
+    "Tải lên file dữ liệu trạm bổ sung (Chấp nhận file .csv hoặc .json):", 
+    type=["csv", "json"]
+)
+
+if uploaded_file is not None:
+    # Nếu phát hiện file mới tải lên chưa được xử lý ở chu kỳ trước
+    if st.session_state.last_uploaded_file != uploaded_file.name:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df_upload = pd.read_csv(uploaded_file)
+            else:
+                df_upload = pd.read_json(uploaded_file)
+                
+            if not df_upload.empty:
+                # Nạp vào database chính, tắt báo động Discord tránh spam, bỏ qua kiểm tra trạng thái dừng hệ thống
+                process_incoming_data(df_upload, silent=True, ignore_running_check=True)
+                st.session_state.last_uploaded_file = uploaded_file.name
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ Lỗi định dạng khi đọc file: {e}. Vui lòng kiểm tra lại cấu trúc các cột.")
+            
+    # Hiển thị trạng thái nạp thành công ổn định dưới ô upload
+    if st.session_state.last_uploaded_file == uploaded_file.name:
+        st.success(f"✅ Đã nạp thành công dữ liệu từ file `{uploaded_file.name}` vào bộ nhớ biểu đồ real-time!")
+
+# =====================================================================
 # BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG TỰ ĐỘNG THEO CHU KỲ TRẠM ĐANG QUÉT
 # =====================================================================
 st.subheader("📈 Biểu Đồ Diễn Biến Real-Time")
 chart_df = st.session_state.mqtt_df.copy()
 
 if not chart_df.empty and len(chart_df) > 0:
-    # Chỉ giữ lại ô chọn thông số, đã bỏ hẳn ô chọn trạm thủ công
     select_metric = st.selectbox("📊 Chọn thông số hiển thị:", options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"])
         
     metric_map = {"Chỉ số VPD (kPa)": "VPD", "Nhiệt độ (°C)": "Nhiệt độ", "Độ ẩm (%)": "Độ ẩm"}
@@ -348,7 +382,6 @@ if not chart_df.empty and len(chart_df) > 0:
             plot_df, x="Thời gian_Plotly", y=target_column, markers=True,
             labels={"Thời gian_Plotly": "Thời gian quét", target_column: select_metric}, template="plotly_white"
         )
-        # Tự động điều chỉnh màu sắc nổi bật riêng cho trạm đang hiển thị
         fig.update_traces(line_color='#1f77b4', line_width=3, marker=dict(size=8, color='#ff4b4b'))
         title_text = f"<b>Diễn biến {select_metric} - Tự Động Theo Trạm {active_station} (Đang hoạt động)</b>"
 
@@ -357,7 +390,7 @@ if not chart_df.empty and len(chart_df) > 0:
             margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified"
         )
         fig.update_xaxes(tickformat="%H:%M:%S")  
-        fig.update_traces(line_shape='spline')  # Giữ hiệu ứng bẻ cong spline mượt mà đúng ý bạn
+        fig.update_traces(line_shape='spline')  
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info(f"📊 Đang chờ tích lũy thêm dữ liệu cho Trạm {active_station}...")
