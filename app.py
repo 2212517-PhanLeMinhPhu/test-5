@@ -7,7 +7,7 @@ import json
 import random  
 import plotly.express as px  
 import streamlit.components.v1 as components
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 # =====================================================================
@@ -55,17 +55,22 @@ if st.session_state.is_running:
 # BỘ ĐIỀU KHIỂN BẮT ĐẦU / DỪNG LẠI
 # =====================================================================
 st.subheader("🎮 Bộ Điều Khiển Hệ Thống")
-col_start, col_stop = st.columns(2)
+col_start, col_stop, col_clear = st.columns(3)
 
 with col_start:
-    if st.button("▶️ BẮT ĐẦU (Chạy tự động)", use_container_width=True, type="primary"):
+    if st.button("▶️ BẮT ĐẦU", use_container_width=True, type="primary"):
         st.session_state.is_running = True
         st.session_state.last_processed_idx = -1 
         st.rerun()
 
 with col_stop:
-    if st.button("⏸️ DỪNG LẠI (Tạm dừng quét)", use_container_width=True):
+    if st.button("⏸️ DỪNG LẠI", use_container_width=True):
         st.session_state.is_running = False
+        st.rerun()
+
+with col_clear:
+    if st.button("🗑️ XÓA CACHE", use_container_width=True):
+        st.session_state.mqtt_df = pd.DataFrame()
         st.rerun()
 
 if st.session_state.is_running:
@@ -141,7 +146,7 @@ def evaluate_status(vpd, temp, humi, station_id, low_t, high_t):
     else:
         return ("Môi trường lý tưởng", f"VPD điểm vàng ({vpd} kPa).", "Giữ nguyên chế độ.")
 
-def process_incoming_data(df_new):
+def process_incoming_data(df_new, silent=False):
     if df_new.empty:
         return
     if "is_running" in st.session_state and not st.session_state.is_running:
@@ -176,23 +181,24 @@ def process_incoming_data(df_new):
     df_normalized['Độ ẩm'] = df_normalized.apply(lambda r: scale_value(r, 'Độ ẩm'), axis=1)
     df_normalized['VPD'] = df_normalized.apply(lambda r: round(calculate_vpd(r['Nhiệt độ'], r['Độ ẩm']), 3), axis=1)
 
-    for _, row in df_normalized.iterrows():
-        station_id = row['STT']
-        t_val = row['Nhiệt độ']
-        h_val = row['Độ ẩm']
-        vpd_val = row['VPD']
-        time_log = str(row['Thời gian'])
-        status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_t, high_t)
-        
-        msg = (
-            f"📡 **[REALTIME] TRẠM {station_id}/5**\n"
-            f"⏱ Cập nhật: `{time_log}`\n"
-            f"🌡 Nhiệt độ: {t_val}°C | 💧 Độ ẩm: {h_val}%\n"
-            f"💨 VPD: **{vpd_val} kPa**\n"
-            f"📢 Trạng thái: **{status}**\n"
-            f"🛠 Xử lý: *{action}*"
-        )
-        send_discord_auto(msg)
+    if not silent:
+        for _, row in df_normalized.iterrows():
+            station_id = row['STT']
+            t_val = row['Nhiệt độ']
+            h_val = row['Độ ẩm']
+            vpd_val = row['VPD']
+            time_log = str(row['Thời gian'])
+            status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_t, high_t)
+            
+            msg = (
+                f"📡 **[REALTIME] TRẠM {station_id}/5**\n"
+                f"⏱ Cập nhật: `{time_log}`\n"
+                f"🌡 Nhiệt độ: {t_val}°C | 💧 Độ ẩm: {h_val}%\n"
+                f"💨 VPD: **{vpd_val} kPa**\n"
+                f"📢 Trạng thái: **{status}**\n"
+                f"🛠 Xử lý: *{action}*"
+            )
+            send_discord_auto(msg)
 
     if st.session_state.mqtt_df.empty:
         st.session_state.mqtt_df = df_normalized
@@ -200,6 +206,28 @@ def process_incoming_data(df_new):
         updated_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True)
         updated_df = updated_df.drop_duplicates(subset=['STT', 'Thời gian'])
         st.session_state.mqtt_df = updated_df.tail(500)
+
+# =====================================================================
+# KHỞI TẠO DỮ LIỆU LỊCH SỬ ĐỂ VẼ BIỂU ĐỒ NGAY LẬP TỨC
+# =====================================================================
+def generate_initial_history():
+    records = []
+    now = datetime.now()
+    for i in range(12, 0, -1):
+        for stt in STATIONS_LIST:
+            stt_idx = int(stt) - 1
+            st_time = now - timedelta(seconds=(i * 150)) + timedelta(seconds=(stt_idx * 30))
+            records.append({
+                "Thời gian": st_time.strftime("%H:%M:%S"),
+                "STT": stt,
+                "Nhiệt độ": round(random.uniform(27.0, 33.0), 1),
+                "Độ ẩm": round(random.uniform(60.0, 78.0), 1)
+            })
+    return pd.DataFrame(records)
+
+if st.session_state.mqtt_df.empty:
+    history_df = generate_initial_history()
+    process_incoming_data(history_df, silent=True)
 
 # --- MQTT LISTENER ---
 def on_message(client, userdata, message):
@@ -288,41 +316,66 @@ else:
     st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
 
 # =====================================================================
-# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG DIỄN BIẾN MƯỢT MÀ
+# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG DIỄN BIẾN MƯỢT MÀ (ĐÃ FIX LỖI DẤU CHẤM)
 # =====================================================================
 st.subheader("📈 Biểu Đồ Diễn Biến Real-Time")
 chart_df = st.session_state.mqtt_df.copy()
 
 if not chart_df.empty and len(chart_df) > 0:
-    select_metric = st.selectbox("📊 Chọn thông số hiển thị:", options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"])
+    c_metric, c_station = st.columns(2)
+    with c_metric:
+        select_metric = st.selectbox("📊 Chọn thông số hiển thị:", options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"])
+    with c_station:
+        select_station = st.selectbox("¼ Chọn trạm xem biểu đồ:", options=["Tất cả các trạm", "Trạm 1", "Trạm 2", "Trạm 3", "Trạm 4", "Trạm 5"])
+        
     metric_map = {"Chỉ số VPD (kPa)": "VPD", "Nhiệt độ (°C)": "Nhiệt độ", "Độ ẩm (%)": "Độ ẩm"}
     target_column = metric_map[select_metric]
     
-    auto_station = active_station
-    single_station_df = chart_df[chart_df["STT"] == auto_station].copy()
-    single_station_df = single_station_df.sort_values(by="Thời gian")
-    
-    if len(single_station_df) > 0:
-        fig = px.area(
-            single_station_df, x="Thời gian", y=target_column, markers=True,
-            labels={"Thời gian": "Thời gian quét", target_column: select_metric}, template="plotly_white"
+    # --- THAY ĐỔI QUAN TRỌNG: CHUYỂN ĐỔI SANG TRỤC DATETIME TUYẾN TÍNH ĐỂ NỐI ĐƯỜNG THẲNG ---
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    def to_plotly_dt(x):
+        x_str = str(x).strip()
+        if len(x_str) == 8 and ":" in x_str:  # Nếu là chuỗi HH:MM:SS
+            return pd.to_datetime(f"{today_str} {x_str}", errors='coerce')
+        return pd.to_datetime(x_str, errors='coerce')
+
+    chart_df['Thời gian_Plotly'] = chart_df['Thời gian'].apply(to_plotly_dt)
+    chart_df = chart_df.dropna(subset=['Thời gian_Plotly'])  # Loại bỏ dòng lỗi nếu có
+    chart_df = chart_df.sort_values(by="Thời gian_Plotly")   # Sắp xếp đúng trình tự thời gian
+
+    # Xử lý lọc dữ liệu dựa trên lựa chọn trạm
+    if select_station == "Tất cả các trạm":
+        plot_df = chart_df
+        fig = px.line(
+            plot_df, x="Thời gian_Plotly", y=target_column, color="STT", markers=True,
+            labels={"Thời gian_Plotly": "Thời gian quét", target_column: select_metric},
+            template="plotly_white", color_discrete_sequence=px.colors.qualitative.Safe
         )
-        fig.update_layout(
-            title=f"<b>Diễn biến {select_metric} - Trạm {auto_station} (Tự động theo chu kỳ)</b>",
-            margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified"
-        )
-        fig.update_traces(
-            line_shape='spline', line_color='#1f77b4', line_width=3,
-            marker=dict(size=8, color='#ff4b4b'), fillcolor='rgba(31, 119, 180, 0.15)'
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        title_text = f"<b>Diễn biến {select_metric} - Toàn Bộ 5 Trạm</b>"
     else:
-        st.warning(f"⏳ Đang chờ đồng bộ dữ liệu của Trạm {auto_station}...")
+        station_num = select_station.replace("Trạm ", "")
+        plot_df = chart_df[chart_df["STT"] == station_num].copy()
+        
+        fig = px.line(
+            plot_df, x="Thời gian_Plotly", y=target_column, markers=True,
+            labels={"Thời gian_Plotly": "Thời gian quét", target_column: select_metric}, template="plotly_white"
+        )
+        fig.update_traces(line_color='#1f77b4', line_width=3, marker=dict(size=8, color='#ff4b4b'))
+        title_text = f"<b>Diễn biến {select_metric} - riêng Trạm {station_num}</b>"
+
+    fig.update_layout(
+        title=title_text,
+        margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    fig.update_xaxes(tickformat="%H:%M:%S")  # Giữ nguyên hiển thị nhãn trục X dạng Giờ:Phút:Giây gọn gàng
+    fig.update_traces(line_shape='spline')   # Bo cong nét đồ thị mượt mà hơn dạng đường gãy góc
+    st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("📊 Hệ thống đang tích lũy dữ liệu vẽ biểu đồ...")
 
 # =====================================================================
-# BẢNG TRẠNG THÁI 5 TRẠM CHU KỲ HIỆN TẠI (PHẲNG HÓA CHỐNG LỖI HOÀN TOÀN)
+# BẢNG TRẠNG THÁI 5 TRẠM CHU KỲ HIỆN TẠI
 # =====================================================================
 st.subheader("🔔 Bảng Trạng Thái 5 Trạm")
 df = st.session_state.mqtt_df.copy()
