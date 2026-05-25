@@ -326,10 +326,21 @@ st.subheader("📈 Biểu Đồ Diễn Biến Real-Time")
 chart_df = st.session_state.mqtt_df.copy()
 
 if not chart_df.empty and len(chart_df) > 0:
-    select_metric = st.selectbox(
-        "📊 Chọn thông số hiển thị:", 
-        options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"]
-    )
+    # --- THÊM BỘ LỌC ĐỂ CHỈ CHỌN VẼ 1 TRẠM ---
+    col_metric, col_station = st.columns(2)
+    
+    with col_metric:
+        select_metric = st.selectbox(
+            "📊 Chọn thông số:", 
+            options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"]
+        )
+        
+    with col_station:
+        select_station = st.selectbox(
+            "📍 Chọn trạm để vẽ biểu đồ:",
+            options=STATIONS_LIST,
+            format_func=lambda x: f"Trạm {x}"
+        )
     
     metric_map = {
         "Chỉ số VPD (kPa)": "VPD",
@@ -337,72 +348,32 @@ if not chart_df.empty and len(chart_df) > 0:
         "Độ ẩm (%)": "Độ ẩm"
     }
     target_column = metric_map[select_metric]
-    chart_df = chart_df.sort_values(by="Thời gian")
     
-    fig = px.line(
-        chart_df,
-        x="Thời gian",
-        y=target_column,
-        color="STT",
-        markers=True,
-        labels={"Thời gian": "Thời gian quét", target_column: select_metric, "STT": "Mã Trạm"},
-        template="plotly_white"
-    )
+    # BÓC TÁCH DỮ LIỆU: Chỉ giữ lại những dòng của Trạm được chọn
+    single_station_df = chart_df[chart_df["STT"] == select_station].copy()
+    single_station_df = single_station_df.sort_values(by="Thời gian")
     
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if not single_station_df.empty:
+        fig = px.line(
+            single_station_df,
+            x="Thời gian",
+            y=target_column,
+            markers=True,
+            labels={"Thời gian": "Thời gian quét", target_column: select_metric},
+            template="plotly_white"
+        )
+        
+        fig.update_layout(
+            title=f"<b>Diễn biến {select_metric} - Trạm {select_station}</b>",
+            margin=dict(l=10, r=10, t=40, b=10),
+            hovermode="x unified"
+        )
+        
+        # Đổi màu đường thẳng thành màu xanh đậm cho dễ nhìn
+        fig.update_traces(line_color="#1f77b4", marker=dict(size=8)) 
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning(f"⏳ Hệ thống chưa quét tới Trạm {select_station} trong chu kỳ này. Vui lòng đợi...")
 else:
     st.info("📊 Hệ thống đang tích lũy dữ liệu vẽ biểu đồ...")
-
-# =====================================================================
-# BẢNG TRẠNG THÁI
-# =====================================================================
-df = st.session_state.mqtt_df.copy()
-
-st.subheader("🔔 Bảng Trạng Thái 5 Trạm")
-processed_chunks = []
-
-for station_id in STATIONS_LIST:
-    station_df = pd.DataFrame()
-    if not df.empty:
-        station_df = df[df['STT'].astype(str) == str(station_id)]
-    
-    if station_df.empty:
-        processed_chunks.append(pd.DataFrame([{
-            "Thời gian": "Đang chờ lượt...",
-            "Số Trạm": f"Trạm {station_id}",
-            "Nhiệt độ (°C)": None,
-            "Độ ẩm (%)": None,
-            "VPD (kPa)": None,
-            "Trạng Thái Vườn": "💤 Đang chờ quét",
-            "Lý Do Cảm Biến": "-",
-            "Khắc Phục": "-"
-        }]))
-        continue
-        
-    row = station_df.sort_values(by='Thời gian', ascending=True).tail(1).iloc[0]
-    
-    t_val = row['Nhiệt độ']
-    h_val = row['Độ ẩm']
-    vpd_val = row['VPD']
-    
-    status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_threshold, high_threshold)
-    
-    processed_chunks.append(pd.DataFrame([{
-        "Thời gian": row['Thời gian'],
-        "Số Trạm": f"Trạm {station_id}",
-        "Nhiệt độ (°C)": t_val,
-        "Độ ẩm (%)": h_val,
-        "VPD (kPa)": vpd_val,
-        "Trạng Thái Vườn": status,
-        "Lý Do Cảm Biến": reason,
-        "Khắc Phục": action
-    }]))
-        
-if processed_chunks:
-    final_table = pd.concat(processed_chunks, ignore_index=True)
-    st.dataframe(final_table, use_container_width=True)
