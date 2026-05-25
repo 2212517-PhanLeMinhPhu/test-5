@@ -104,7 +104,7 @@ st.session_state.low_threshold = low_threshold
 st.session_state.high_threshold = high_threshold
 
 # =====================================================================
-# LOGIC VÀ ĐÁNH GIÁ TRẠNG THÁI (ĐÃ ĐƯỢC CHỐNG CẮT CHỮ TUYỆT ĐỐI)
+# LOGIC VÀ ĐÁNH GIÁ TRẠNG THÁI
 # =====================================================================
 def calculate_vpd(temp, humi):
     vp_sat = 0.61078 * np.exp((17.27 * temp) / (temp + 237.3))
@@ -196,7 +196,6 @@ def process_incoming_data(df_new):
     high_t = st.session_state.high_threshold
     df_normalized = df_new.copy()
 
-    # Đổi tên cột an toàn từng dòng ngắn
     if 'time' in df_normalized.columns:
         df_normalized.rename(columns={'time': 'Thời gian'}, inplace=True)
     if 'station' in df_normalized.columns:
@@ -250,8 +249,9 @@ def process_incoming_data(df_new):
         st.session_state.mqtt_df = df_normalized
     else:
         updated_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True)
+        # Giữ lại lịch sử tối đa 500 điểm để vẽ đường thẳng dài mượt mà
         updated_df = updated_df.drop_duplicates(subset=['STT', 'Thời gian'])
-        st.session_state.mqtt_df = updated_df.tail(200)
+        st.session_state.mqtt_df = updated_df.tail(500)
 
 # --- CƠ CHẾ LẮNG NGHE MQTT ---
 def on_message(client, userdata, message):
@@ -277,7 +277,7 @@ _ = start_mqtt_client()
 # =====================================================================
 # XỬ LÝ ĐIỀU PHỐI XUNG NHỊP CHUẨN
 # =====================================================================
-st.subheader("⏱️ Tiến Độ Điều Phối Xung Nhịp")
+st.subheader("⏱️ Tiết Độ Điều Phối Xung Nhịp")
 
 idx = st.session_state.current_station_index
 active_station = STATIONS_LIST[idx]
@@ -290,10 +290,9 @@ with col2:
     st.metric(label="⏳ Trạm xếp hàng", value=f"Trạm {next_station}")
 
 if st.session_state.is_running and st.session_state.last_processed_idx != idx:
-    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_time_str = datetime.now().strftime("%H:%M:%S") # Chỉ lấy Giờ:Phút:Giây cho biểu đồ gọn gàng
     
-    if active_station == "1":
-        st.session_state.mqtt_df = pd.DataFrame()
+    # ĐÃ ĐƯỢC XÓA: Bỏ logic xóa sạch dữ liệu tại đây để biểu đồ không bị mất lịch sử đường nối thẳng.
 
     scenarios = ["NORMAL", "MAX_HUMIDITY", "EXTREME_HOT", "LOST_SIGNAL"]
     weights = [0.85, 0.07, 0.05, 0.03]
@@ -361,7 +360,7 @@ else:
     st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
 
 # =====================================================================
-# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG TỰ ĐỘNG THEO TRẠM HIỆN TẠI
+# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG DIỄN BIẾN MƯỢT MÀ (ĐÃ NÂNG CẤP ĐỒ HỌA)
 # =====================================================================
 st.subheader("📈 Biểu Đồ Diễn Biến Real-Time")
 
@@ -384,8 +383,9 @@ if not chart_df.empty and len(chart_df) > 0:
     single_station_df = chart_df[chart_df["STT"] == auto_station].copy()
     single_station_df = single_station_df.sort_values(by="Thời gian")
     
-    if not single_station_df.empty:
-        fig = px.line(
+    if len(single_station_df) > 0:
+        # Sử dụng px.area để đổ bóng vùng không gian phía dưới giúp biểu đồ trông hiện đại hơn
+        fig = px.area(
             single_station_df,
             x="Thời gian",
             y=target_column,
@@ -397,13 +397,24 @@ if not chart_df.empty and len(chart_df) > 0:
         fig.update_layout(
             title=(
                 f"<b>Diễn biến {select_metric} - "
-                f"Chỉ xem riêng Trạm {auto_station} (Tự động chuyển)</b>"
+                f"Trạm {auto_station} (Tự động theo chu kỳ)</b>"
             ),
             margin=dict(l=10, r=10, t=40, b=10),
             hovermode="x unified"
         )
-        fig.update_traces(line_color="#1f77b4", marker=dict(size=8)) 
+        
+        # Cấu hình đường line dạng spline (bo tròn mềm mại) và đổi màu sắc sống động
+        fig.update_traces(
+            line_shape='spline',
+            line_color='#1f77b4',
+            line_width=3,
+            marker=dict(size=8, color='#ff4b4b', symbol='circle'),
+            fillcolor='rgba(31, 119, 180, 0.15)' # Đổ màu gradient nhẹ dưới đường line
+        )
         st.plotly_chart(fig, use_container_width=True)
+        
+        if len(single_station_df) == 1:
+            st.caption("💡 *Mẹo: Biểu đồ sẽ tự nối thành các đường lên xuống rõ ràng khi trạm này nhận điểm dữ liệu tiếp theo ở vòng quét tới.*")
     else:
         st.warning(f"⏳ Đang chờ đồng bộ dữ liệu của Trạm {auto_station}...")
 else:
@@ -450,12 +461,3 @@ for station_id in STATIONS_LIST:
         "Số Trạm": f"Trạm {station_id}",
         "Nhiệt độ (°C)": t_val,
         "Độ ẩm (%)": h_val,
-        "VPD (kPa)": vpd_val,
-        "Trạng Thái Vườn": status,
-        "Lý Do Cảm Biến": reason,
-        "Khắc Phục": action
-    }]))
-        
-if processed_chunks:
-    final_table = pd.concat(processed_chunks, ignore_index=True)
-    st.dataframe(final_table, use_container_width=True)
