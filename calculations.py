@@ -1,40 +1,27 @@
 import math
+import random
 
-def calculate_vpd(temperature: float, humidity: float) -> float:
-    """
-    Tính toán Áp suất hơi hụt (VPD - Vapor Pressure Deficit)
-    
-    Tham số:
-    temperature (float): Nhiệt độ không khí (°C)
-    humidity (float): Độ ẩm tương đối của không khí (%)
-    
-    Trả về:
-    float: Giá trị VPD (kPa) được làm tròn 2 chữ số thập phân
-    """
-    # Khống chế lỗi dữ liệu đầu vào nếu có
-    if humidity < 0 or humidity > 100:
-        raise ValueError("Độ ẩm phải nằm trong khoảng từ 0% đến 100%")
+def calculate_vpd(temp, rh):
+    """Tính toán chỉ số áp suất hơi thâm hụt (VPD)"""
+    if temp == 0 and rh == 0:
+        return 0.0
+    vp_sat = 0.61078 * math.exp((17.27 * temp) / (temp + 237.3))
+    vpd = vp_sat * (1.0 - (rh / 100.0))
+    return vpd
 
-    # 1. Tính Áp suất hơi bão hòa (VPsat) bằng công thức Tetens (kPa)
-    vp_sat = 0.61078 * math.exp((17.27 * temperature) / (temperature + 237.3))
-    
-    # 2. Tính VPD thực tế dựa trên độ ẩm thực tế (VPact)
-    # VPD = VPsat - VPact = VPsat * (1 - RH / 100)
-    vpd = vp_sat * (1.0 - (humidity / 100.0))
-    
-    return round(vpd, 2)
-
-# ==========================================
-# VÍ DỤ CHẠY THỬ KIỂM TRA
-# ==========================================
-if __name__ == "__main__":
-    # Giả sử nhiệt độ nhà kính Đà Lạt là 25°C và độ ẩm là 65%
-    test_temp = 25.0
-    test_rh = 65.0
-    
-    result_vpd = calculate_vpd(test_temp, test_rh)
-    
-    print(f"--- KẾT QUẢ KIỂM TRA ---")
-    print(f"🌡️ Nhiệt độ: {test_temp}°C")
-    print(f"💧 Độ ẩm: {test_rh}%")
-    print(f"🎯 Chỉ số VPD tính được: {result_vpd} kPa")
+def get_weather_by_time(sim_time):
+    """Mô phỏng thời tiết ngẫu nhiên theo chu kỳ buổi trong ngày ở Đà Lạt"""
+    hour = sim_time.hour
+    if 7 <= hour < 11:
+        temp = round(random.uniform(20.0, 25.5), 1)
+        rh = round(random.uniform(65.0, 80.0), 1)
+    elif 11 <= hour < 15:
+        temp = round(random.uniform(26.0, 31.0), 1)
+        rh = round(random.uniform(40.0, 55.0), 1)
+    elif 15 <= hour < 19:
+        temp = round(random.uniform(19.0, 25.0), 1)
+        rh = round(random.uniform(60.0, 75.0), 1)
+    else:
+        temp = round(random.uniform(14.0, 18.5), 1)
+        rh = round(random.uniform(80.0, 95.0), 1)
+    return temp, rh
