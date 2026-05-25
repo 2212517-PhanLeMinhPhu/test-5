@@ -43,8 +43,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# KHỞI TẠO SESSION STATE CHUẨN AN TOÀN (Sửa triệt để lỗi gãy dòng)
-CHẤU_HÌNH_MẶC_ĐỊNH = {
+# KHỞI TẠO SESSION STATE CHUẨN AN TOÀN
+CHAU_HINH_MAC_DINH = {
     "temp": 0.0,
     "rh": 0.0,
     "countdown": 15,
@@ -59,11 +59,11 @@ CHẤU_HÌNH_MẶC_ĐỊNH = {
     "file_vpd_range_val": (0.6, 1.1)
 }
 
-for key, value in CHẤU_HÌNH_MẶC_ĐỊNH.items():
+for key, val in CHAU_HINH_MAC_DINH.items():
     if key not in st.session_state:
-        st.session_state[key] = value
+        st.session_state[key] = val
 
-# CẤU HÌNH 9 LOẠI CÂY TRỒNG ĐÀ LẠT PHỔ BIẾN
+# CẤU HÌNH LOẠI CÂY TRỒNG
 DANH_SACH_CAY = {
     "🍓 Dâu tây Đà Lạt (Hoa / Trái)": (0.6, 1.1),
     "🍓 Dâu tây Đà Lạt (Giai đoạn ngó/cây con)": (0.4, 0.8),
@@ -207,64 +207,4 @@ with tab_future:
                     
                     if trend_type == "danger_red":
                         st.markdown(f"<div class='danger-box-red'>🚨 {trend}</div>", unsafe_allow_html=True)
-                    elif trend_type == "danger_blue":
-                        st.markdown(f"<div class='danger-box-blue'>🚨 {trend}</div>", unsafe_allow_html=True)
-                    
-                    st.markdown(f"**VPD Hiện Tại:** <span style='color: {text_color}; font-weight: bold; font-size:18px;'>{vpd_result:.2f} kPa</span> ({status_lbl})", unsafe_allow_html=True)
-                    st.markdown(f"**Biện pháp kỹ thuật:** _{get_quick_solution(vpd_result, vpd_min, vpd_max, current_sim_dt.hour)}_")
-                    if trend_type not in ["danger_red", "danger_blue"]:
-                        st.markdown(f"**Dự báo chu kỳ:** {trend}")
-
-        left_panel_monitor()
-
-    with right_col:
-        st.markdown("<h3 style='color: #2E7D32; font-size: 18px;'>📊 TRUNG TÂM PHÂN TÍCH CHU KỲ REALTIME</h3>", unsafe_allow_html=True)
-        if len(st.session_state.history) == 0:
-            st.info("Chưa có số liệu. Vui lòng bấm '▶️ Bắt đầu' để tải dữ liệu biểu đồ.")
-        else:
-            unique_days = sorted(list(set([r["Ngày"] for r in st.session_state.history])), reverse=True)
-            filter_col1, filter_col2 = st.columns([7, 3])
-            with filter_col1: selected_view_day = st.selectbox("Lọc ngày lịch sử:", unique_days, label_visibility="collapsed")
-            with filter_col2:
-                if st.button("🗑️ Reset All", use_container_width=True, key="btn_reset_rt"):
-                    st.session_state.stt_counter = 0; st.session_state.history = []; st.session_state.simulated_time = "2026-05-24 07:00:00"
-                    st.session_state.is_completed = False; st.session_state.is_running = False
-                    st.rerun()
-
-            df_all_records = pd.DataFrame(st.session_state.history)
-            df_filtered = df_all_records[df_all_records["Ngày"] == selected_view_day].iloc[::-1].copy()
-
-            main_tab1, main_tab2, main_tab3 = st.tabs(["📈 Biểu đồ trực quan", "📊 Thống kê theo buổi", "📋 Bảng Nhật ký số liệu"])
-            with main_tab1:
-                sub_t1, sub_t2, sub_t3, sub_t4 = st.tabs(["🎯 Chỉ số VPD", "🌡️ Nhiệt độ", "💧 Độ ẩm", "📊 Tổ hợp 3 chỉ số"])
-                with sub_t1: st.altair_chart(draw_vpd_chart(df_filtered, vpd_min, vpd_max), use_container_width=True)
-                with sub_t2: st.altair_chart(draw_temperature_chart(df_filtered), use_container_width=True)
-                with sub_t3: st.altair_chart(draw_humidity_chart(df_filtered), use_container_width=True)
-                with sub_t4: st.altair_chart(draw_combined_chart(df_filtered), use_container_width=True)
-            with main_tab2:
-                st.dataframe(analyze_day_by_blocks_rt(st.session_state.history, vpd_min, vpd_max, selected_view_day), use_container_width=True, hide_index=True)
-            with main_tab3:
-                df_display = df_filtered.copy()
-                df_display["Thời gian"] = df_display["Hiển thị Giờ"]
-                styled_df_rt = df_display[["STT", "Thời gian", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]].style.apply(style_status_rows, axis=1)
-                st.dataframe(styled_df_rt, use_container_width=True, hide_index=True)
-
-
-# --------------------------------------------------------
-# 📁 TAB 2: UPLOAD & BULK FILE ANALYTICS
-# --------------------------------------------------------
-with tab_past:
-    st.markdown("<h3 style='color: #1A5276; font-size: 19px;'>📁 TỰ ĐỘNG PHÂN TÍCH FILE IOT NHÀ KÍNH</h3>", unsafe_allow_html=True)
-    
-    top_left, top_right = st.columns([5, 5])
-    
-    with top_left:
-        with st.container(border=True):
-            st.markdown("<div class='upload-header'>🌿 1. CẤU HÌNH LOẠI CÂY TRỒNG ĐÀ LẠT</div>", unsafe_allow_html=True)
-            file_plant_option = st.selectbox("Chọn mô hình cây trồng áp dụng cho file:", plant_list_keys, index=st.session_state.file_plant_idx, key="file_plant_select")
-            st.session_state.file_plant_idx = plant_list_keys.index(file_plant_option)
-            
-            file_default_range = DANH_SACH_CAY[file_plant_option] if file_plant_option != "🛠️ Tùy chỉnh thủ công ngưỡng riêng" else st.session_state.file_vpd_range_val
-            
-            file_vpd_range = st.slider("Ngưỡng VPD tối ưu thiết lập (kPa):", min_value=0.0, max_value=3.0, value=file_default_range, step=0.1, key="file_vpd_slider", disabled=(file_plant_option != "🛠️ Tùy chỉnh thủ công ngưỡng riêng"))
-            st.
+                    elif trend_type
