@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # Import các module nội bộ
 try:
     from calculations import calculate_vpd, get_weather_by_time
-    from services import send_telegram_message, get_quick_solution
+    from services import send_discord_message, get_quick_solution
     from analytics import (
         analyze_day_by_blocks_rt, 
         predict_vpd_trend_v3, 
@@ -28,8 +28,8 @@ except ModuleNotFoundError as e:
     st.info("💡 Vui lòng đảm bảo các file 'calculations.py', 'services.py', 'analytics.py', và 'charts.py' ở cùng thư mục.")
     st.stop()
 
-TELE_TOKEN = "8917951413:AAE6LKUEfYEYiQrFWGoKsQn0tumZc_XbcHg"
-TELE_CHAT_ID = "7290661009"
+# THAY ĐƯỜNG DẪN WEBHOOK DISCORD CỦA BẠN VÀO ĐÂY
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/xxxxxxxxx/xxxxxxxxx"
 
 st.set_page_config(page_title="VPD Farm Analytics", page_icon="🌿", layout="wide")
 
@@ -119,13 +119,13 @@ def trigger_new_data(vpd_min, vpd_max):
     
     if new_vpd < vpd_min:
         status_text = "⚠️ Quá ẩm"
-        tele_status = "🟦 QUÁ ẨM"
+        discord_status = "🟦 QUÁ ẨM"
     elif new_vpd <= vpd_max:
         status_text = "✅ Lý tưởng"
-        tele_status = "🟩 LÝ TƯỞNG"
+        discord_status = "🟩 LÝ TƯỞNG"
     else:
         status_text = "🚨 Quá khô"
-        tele_status = "🟥 QUÁ KHÔ"
+        discord_status = "🟥 QUÁ KHÔ"
     
     st.session_state.history.insert(0, {
         "STT": st.session_state.stt_counter,
@@ -139,7 +139,7 @@ def trigger_new_data(vpd_min, vpd_max):
         "Trạng thái": status_text
     })
     
-    if TELE_TOKEN and TELE_CHAT_ID:
+    if DISCORD_WEBHOOK_URL and "webhooks" in DISCORD_WEBHOOK_URL:
         sol = get_quick_solution(new_vpd, vpd_min, vpd_max, current_sim_dt.hour)
         unique_days = sorted(list(set([r["Ngày"] for r in st.session_state.history])), reverse=True)
         latest_day = unique_days[0] if unique_days else current_date_str
@@ -148,15 +148,15 @@ def trigger_new_data(vpd_min, vpd_max):
         trend, trend_type = predict_vpd_trend_v3(history_of_latest_day, current_sim_dt.hour, vpd_min, vpd_max)
         prefix = "🚨 [CẢNH BÁO SỚM] " if "CẢNH BÁO SỚM" in trend else ""
         
-        telegram_msg = (
-            f"🌿 *HỆ THỐNG VPD ĐÀ LẠT REALTIME*\n"
+        discord_msg = (
+            f"🌿 **HỆ THỐNG VPD ĐÀ LẠT REALTIME**\n"
             f"⏰ {current_date_str} - {current_sim_dt.strftime('%H:%M')}\n"
             f"📊 Môi trường: {st.session_state.temp}°C | {st.session_state.rh}%\n\n"
-            f"*1️⃣ Hiện trạng:* *{new_vpd:.2f} kPa* — {tele_status}\n"
-            f"*2️⃣ Biện pháp:* _{sol}_\n"
-            f"*3️⃣ Dự báo:* {prefix}_{trend}_"
+            f"**1️⃣ Hiện trạng:** **{new_vpd:.2f} kPa** — {discord_status}\n"
+            f"**2️⃣ Biện pháp:** *{sol}*\n"
+            f"**3️⃣ Dự báo:** {prefix}*{trend}*"
         )
-        send_telegram_message(TELE_TOKEN, TELE_CHAT_ID, telegram_msg)
+        send_discord_message(DISCORD_WEBHOOK_URL, discord_msg)
     
     next_sim_dt = current_sim_dt + timedelta(minutes=10)
     if next_sim_dt.hour == 0 and next_sim_dt.minute == 0:
