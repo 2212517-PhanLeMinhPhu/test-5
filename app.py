@@ -316,61 +316,51 @@ else:
     st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
 
 # =====================================================================
-# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG DIỄN BIẾN MƯỢT MÀ (ĐÃ FIX LỖI DẤU CHẤM)
+# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG TỰ ĐỘNG THEO CHU KỲ TRẠM ĐANG QUÉT
 # =====================================================================
 st.subheader("📈 Biểu Đồ Diễn Biến Real-Time")
 chart_df = st.session_state.mqtt_df.copy()
 
 if not chart_df.empty and len(chart_df) > 0:
-    c_metric, c_station = st.columns(2)
-    with c_metric:
-        select_metric = st.selectbox("📊 Chọn thông số hiển thị:", options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"])
-    with c_station:
-        select_station = st.selectbox("¼ Chọn trạm xem biểu đồ:", options=["Tất cả các trạm", "Trạm 1", "Trạm 2", "Trạm 3", "Trạm 4", "Trạm 5"])
+    # Chỉ giữ lại ô chọn thông số, đã bỏ hẳn ô chọn trạm thủ công
+    select_metric = st.selectbox("📊 Chọn thông số hiển thị:", options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"])
         
     metric_map = {"Chỉ số VPD (kPa)": "VPD", "Nhiệt độ (°C)": "Nhiệt độ", "Độ ẩm (%)": "Độ ẩm"}
     target_column = metric_map[select_metric]
     
-    # --- THAY ĐỔI QUAN TRỌNG: CHUYỂN ĐỔI SANG TRỤC DATETIME TUYẾN TÍNH ĐỂ NỐI ĐƯỜNG THẲNG ---
+    # --- CHUYỂN ĐỔI SANG TRỤC DATETIME TUYẾN TÍNH ĐỂ KẾT NỐI ĐƯỜNG THẲNG ---
     today_str = datetime.now().strftime("%Y-%m-%d")
     def to_plotly_dt(x):
         x_str = str(x).strip()
-        if len(x_str) == 8 and ":" in x_str:  # Nếu là chuỗi HH:MM:SS
+        if len(x_str) == 8 and ":" in x_str:
             return pd.to_datetime(f"{today_str} {x_str}", errors='coerce')
         return pd.to_datetime(x_str, errors='coerce')
 
     chart_df['Thời gian_Plotly'] = chart_df['Thời gian'].apply(to_plotly_dt)
-    chart_df = chart_df.dropna(subset=['Thời gian_Plotly'])  # Loại bỏ dòng lỗi nếu có
-    chart_df = chart_df.sort_values(by="Thời gian_Plotly")   # Sắp xếp đúng trình tự thời gian
+    chart_df = chart_df.dropna(subset=['Thời gian_Plotly'])
+    chart_df = chart_df.sort_values(by="Thời gian_Plotly")
 
-    # Xử lý lọc dữ liệu dựa trên lựa chọn trạm
-    if select_station == "Tất cả các trạm":
-        plot_df = chart_df
-        fig = px.line(
-            plot_df, x="Thời gian_Plotly", y=target_column, color="STT", markers=True,
-            labels={"Thời gian_Plotly": "Thời gian quét", target_column: select_metric},
-            template="plotly_white", color_discrete_sequence=px.colors.qualitative.Safe
-        )
-        title_text = f"<b>Diễn biến {select_metric} - Toàn Bộ 5 Trạm</b>"
-    else:
-        station_num = select_station.replace("Trạm ", "")
-        plot_df = chart_df[chart_df["STT"] == station_num].copy()
-        
+    # TỰ ĐỘNG LỌC: Chỉ lấy lịch sử của trạm vừa quét xong (active_station)
+    plot_df = chart_df[chart_df["STT"] == str(active_station)].copy()
+    
+    if not plot_df.empty:
         fig = px.line(
             plot_df, x="Thời gian_Plotly", y=target_column, markers=True,
             labels={"Thời gian_Plotly": "Thời gian quét", target_column: select_metric}, template="plotly_white"
         )
+        # Tự động điều chỉnh màu sắc nổi bật riêng cho trạm đang hiển thị
         fig.update_traces(line_color='#1f77b4', line_width=3, marker=dict(size=8, color='#ff4b4b'))
-        title_text = f"<b>Diễn biến {select_metric} - riêng Trạm {station_num}</b>"
+        title_text = f"<b>Diễn biến {select_metric} - Tự Động Theo Trạm {active_station} (Đang hoạt động)</b>"
 
-    fig.update_layout(
-        title=title_text,
-        margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    fig.update_xaxes(tickformat="%H:%M:%S")  # Giữ nguyên hiển thị nhãn trục X dạng Giờ:Phút:Giây gọn gàng
-    fig.update_traces(line_shape='spline')   # Bo cong nét đồ thị mượt mà hơn dạng đường gãy góc
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(
+            title=title_text,
+            margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified"
+        )
+        fig.update_xaxes(tickformat="%H:%M:%S")  
+        fig.update_traces(line_shape='spline')  # Giữ hiệu ứng bẻ cong spline mượt mà đúng ý bạn
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info(f"📊 Đang chờ tích lũy thêm dữ liệu cho Trạm {active_station}...")
 else:
     st.info("📊 Hệ thống đang tích lũy dữ liệu vẽ biểu đồ...")
 
