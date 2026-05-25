@@ -20,8 +20,7 @@ try:
     from charts import (
         draw_temperature_chart, 
         draw_humidity_chart, 
-        draw_vpd_chart, 
-        draw_combined_chart
+        draw_vpd_chart
     )
 except ModuleNotFoundError as e:
     st.error(f"❌ Không tìm thấy module bổ trợ: {e.name}")
@@ -299,14 +298,24 @@ with tab_future:
             df_filtered = df_all_records[df_all_records["Ngày"] == selected_view_day].iloc[::-1].copy()
 
             main_tab1, main_tab2, main_tab3 = st.tabs(["📈 Biểu đồ trực quan", "📊 Thống kê theo buổi", "📋 Bảng Nhật ký số liệu"])
+            
             with main_tab1:
-                sub_t1, sub_t2, sub_t3, sub_t4 = st.tabs(["🎯 Chỉ số VPD", "🌡️ Nhiệt độ", "💧 Độ ẩm", "📊 Tổ hợp 3 chỉ số"])
-                with sub_t1: st.altair_chart(draw_vpd_chart(df_filtered, vpd_min, vpd_max), use_container_width=True)
-                with sub_t2: st.altair_chart(draw_temperature_chart(df_filtered), use_container_width=True)
-                with sub_t3: st.altair_chart(draw_humidity_chart(df_filtered), use_container_width=True)
-                with sub_t4: st.altair_chart(draw_combined_chart(df_filtered), use_container_width=True)
+                # 1. Đồ thị VPD nằm cố định ở phía trên
+                st.markdown("##### 🎯 Chỉ số VPD (kPa) bám biên tối ưu")
+                st.altair_chart(draw_vpd_chart(df_filtered, vpd_min, vpd_max), use_container_width=True)
+                
+                # 2. Tạo 2 cột bên dưới để chứa Nhiệt độ và Độ ẩm song song
+                sub_col1, sub_col2 = st.columns(2)
+                with sub_col1:
+                    st.markdown("##### 🌡️ Biến động Nhiệt độ (°C)")
+                    st.altair_chart(draw_temperature_chart(df_filtered), use_container_width=True)
+                with sub_col2:
+                    st.markdown("##### 💧 Biến động Độ ẩm (%)")
+                    st.altair_chart(draw_humidity_chart(df_filtered), use_container_width=True)
+                    
             with main_tab2:
                 st.dataframe(analyze_day_by_blocks_rt(st.session_state.history, vpd_min, vpd_max, selected_view_day), use_container_width=True, hide_index=True)
+            
             with main_tab3:
                 df_display = df_filtered.copy()
                 df_display["Thời gian"] = df_display["Hiển thị Giờ"]
@@ -447,163 +456,4 @@ with tab_past:
                     elif "1 Tuần gần nhất" in time_filter_option:
                         df_raw_calc = df_raw_calc[df_raw_calc["datetime_internal"] >= (max_time_in_file - timedelta(days=7))]
                     elif "1 Tháng gần nhất" in time_filter_option:
-                        df_raw_calc = df_raw_calc[df_raw_calc["datetime_internal"] >= (max_time_in_file - timedelta(days=30))]
-
-            df_for_block_analysis = df_raw_calc.copy()
-
-            if len(df_raw_calc) > 0:
-                unique_days_filtered = df_raw_calc["only_date"].nunique()
-                df_resample_input = df_raw_calc[["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw"]].copy()
-                df_resample_input.set_index("datetime_internal", inplace=True)
-                
-                if any(k in time_filter_option for k in ["1 Tuần gần nhất", "1 Tháng gần nhất", "tiếp theo"]):
-                    df_resampled = df_resample_input.resample("1D").mean().dropna()
-                elif "Xem toàn bộ dữ liệu gốc" in time_filter_option:
-                    if unique_days_filtered > 2:
-                        df_resampled = df_resample_input.resample("1h").mean().dropna()
-                    else:
-                        df_resampled = df_resample_input.resample("10min").mean().dropna()
-                elif "1 Ngày gần nhất" in time_filter_option:
-                    df_resampled = df_resample_input.resample("10min").mean().dropna()
-                else:
-                    df_resampled = df_resample_input.copy()
-                
-                df_resampled["datetime_internal"] = df_resampled.index
-                
-                if any(k in time_filter_option for k in ["1 Tuần gần nhất", "1 Tháng gần nhất", "tiếp theo"]) or ( "Xem toàn bộ dữ liệu gốc" in time_filter_option and unique_days_filtered > 2 ):
-                    df_resampled["Hiển thị Giờ"] = df_resampled["datetime_internal"].dt.strftime("%d/%m %H:%M")
-                else:
-                    df_resampled["Hiển thị Giờ"] = df_resampled["datetime_internal"].dt.strftime("%H:%M")
-                
-                df_resampled.reset_index(drop=True, inplace=True)
-            else:
-                unique_days_filtered = 0
-                df_resampled = pd.DataFrame(columns=["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw", "Hiển thị Giờ"])
-
-            df_processed = pd.DataFrame()
-            df_processed["datetime_internal"] = df_resampled["datetime_internal"]
-            df_processed["Nhiệt độ (°C)"] = df_resampled["Nhiệt độ (°C)"].round(2)
-            df_processed["Độ ẩm (%)"] = df_resampled["Độ ẩm (%)"].round(2)
-            df_processed["Hiển thị Giờ"] = df_resampled["Hiển thị Giờ"]
-            
-            if unique_days_filtered > 2:
-                df_processed["VPD (kPa)"] = df_resampled["VPD_raw"].round(2)
-            else:
-                df_processed["VPD (kPa)"] = df_processed.apply(
-                    lambda row: round(calculate_vpd(row["Nhiệt độ (°C)"], row["Độ ẩm (%)"]), 2), 
-                    axis=1
-                )
-                
-            df_processed["Ngày"] = "Dữ liệu File"
-            df_processed["Trạng thái"] = df_processed["VPD (kPa)"].apply(
-                lambda x: "⚠️ Quá ẩm" if x < file_vpd_min else ("✅ Lý tưởng" if x <= file_vpd_max else "🚨 Quá khô")
-            )
-            
-            # --- KPIs THỐNG KÊ TỔNG QUAN CHU KỲ ---
-            st.markdown("<div style='margin-top:15px; margin-bottom:5px; font-weight:bold; color:#1A5276;'>📊 TỔNG QUAN CHU KỲ SAU KHI GỘP SỐ LIỆU TỐI ƯU</div>", unsafe_allow_html=True)
-            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            with m_col1:
-                st.markdown(f"<div class='metric-card-upload'><span>📈 VPD TRUNG BÌNH CHU KỲ</span><br><b style='font-size:18px;color:#2E7D32;'>{df_processed['VPD (kPa)'].mean():.2f} kPa</b></div>", unsafe_allow_html=True)
-            with m_col2:
-                st.markdown(f"<div class='metric-card-upload'><span>🌡️ NHIỆT ĐỘ TRUNG BÌNH CHU KỲ</span><br><b style='font-size:18px;color:#FF4B4B;'>{df_processed['Nhiệt độ (°C)'].mean():.1f} °C</b></div>", unsafe_allow_html=True)
-            with m_col3:
-                st.markdown(f"<div class='metric-card-upload'><span>💧 ĐỘ ẨM TRUNG BÌNH CHU KỲ</span><br><b style='font-size:18px;color:#0068C9;'>{df_processed['Độ ẩm (%)'].mean():.1f} %</b></div>", unsafe_allow_html=True)
-            with m_col4:
-                st.markdown(f"<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU TRÊN BIỂU ĐỒ</span><br><b style='font-size:18px;color:#5D6D7E;'>{len(df_processed)} điểm</b></div>", unsafe_allow_html=True)
-
-            # --- TÍCH HỢP ĐÁNH GIÁ CHUYÊN SÂU ---
-            stress_result = calculate_plant_stress_hours(df_processed, file_vpd_min, file_vpd_max, time_filter_option)
-            st.markdown("<div style='margin-top:10px; font-weight:bold; color:#B71C1C;'>⚠️ ĐÁNH GIÁ CHUYÊN SÂU: ÁP LỰC STRESS KHÍ KHỔNG CỦA CÂY TRỒNG</div>", unsafe_allow_html=True)
-            s_col1, s_col2 = st.columns(2)
-            with s_col1:
-                d_hrs = stress_result["dry_hours"]
-                if d_hrs > 2.0:
-                    st.error(f"🚨 **Stress Khô Nóng:** Cây bị đóng khí khổng suốt **{d_hrs} giờ**. Nguy cơ cháy mép lá, thui bông!")
-                else:
-                    st.success(f"✅ **Áp lực khô:** An toàn (Chỉ bị {d_hrs} giờ khô gắt).")
-            with s_col2:
-                w_hrs = stress_result["wet_hours"]
-                if w_hrs > 4.0:
-                    st.warning(f"🟦 **Stress Ẩm Ướt:** Tích tụ ẩm cao liên tục **{w_hrs} giờ**. Dễ bùng nấm phấn trắng!")
-                else:
-                    st.success(f"✅ **Áp lực ẩm:** An toàn (Lá cây nhanh khô ráo).")
-
-            st.write("") 
-            
-            res_left, res_right = st.columns([6.2, 3.8])
-            with res_left:
-                st.markdown("##### 📊 HỆ THỐNG BIỂU ĐỒ TRỰC QUAN GỌN GÀNG")
-                file_sub_tab1, file_sub_tab2, file_sub_tab3, file_sub_tab4 = st.tabs(["🎯 Chỉ số VPD", "🌡️ Nhiệt độ", "💧 Độ ẩm", "📊 Tổ hợp 3 chỉ số"])
-                with file_sub_tab1: st.altair_chart(draw_vpd_chart(df_processed, file_vpd_min, file_vpd_max), use_container_width=True)
-                with file_sub_tab2: st.altair_chart(draw_temperature_chart(df_processed), use_container_width=True)
-                with file_sub_tab3: st.altair_chart(draw_humidity_chart(df_processed), use_container_width=True)
-                with file_sub_tab4: st.altair_chart(draw_combined_chart(df_processed), use_container_width=True)
-                
-            with res_right:
-                st.markdown("##### 📋 BẢNG NHẬT KÝ THEO DÕI ĐIỂM GỘP CHU KỲ")
-                preview_cols = ["Hiển thị Giờ", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]
-                
-                df_table_clean = df_processed[preview_cols].copy()
-                df_table_clean["Nhiệt độ (°C)"] = df_table_clean["Nhiệt độ (°C)"].apply(lambda x: f"{float(x):.2f}")
-                df_table_clean["Độ ẩm (%)"] = df_table_clean["Độ ẩm (%)"].apply(lambda x: f"{float(x):.2f}")
-                df_table_clean["VPD (kPa)"] = df_table_clean["VPD (kPa)"].apply(lambda x: f"{float(x):.2f}")
-                
-                styled_df_file = df_table_clean.style.apply(style_status_rows, axis=1)
-                st.dataframe(styled_df_file, use_container_width=True, hide_index=True, height=290)
-                
-                st.download_button(
-                    label="📥 Xuất báo cáo tính toán chu kỳ (.csv)",
-                    data=df_processed.to_csv(index=False).encode('utf-8'),
-                    file_name="vpd_periodic_report.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-
-            st.markdown("---")
-            st.markdown("##### 📊 BÁO CÁO PHÂN TÍCH TỔNG HỢP THEO BUỔI CHU KỲ (Dữ liệu gốc từ File)")
-            
-            if len(df_for_block_analysis) > 0:
-                df_for_block_analysis["Hour"] = df_for_block_analysis["datetime_internal"].dt.hour
-                
-                def assign_block(hour):
-                    if 5 <= hour < 10: return "🌅 Sáng (05h - 10h)"
-                    elif 10 <= hour < 15: return "☀️ Trưa (10h - 15h)"
-                    elif 15 <= hour < 19: return "🌇 Chiều (15h - 19h)"
-                    elif 19 <= hour < 23: return "🌌 Tối (19h - 23h)"
-                    else: return "🌙 Khuya (23h - 05h)"
-                
-                df_for_block_analysis["Buổi"] = df_for_block_analysis["Hour"].apply(assign_block)
-                block_summary = df_for_block_analysis.groupby("Buổi").agg({
-                    "Nhiệt độ (°C)": "mean", "Độ ẩm (%)": "mean", "VPD_raw": "mean"
-                }).reindex(["🌅 Sáng (05h - 10h)", "☀️ Trưa (10h - 15h)", "🌇 Chiều (15h - 19h)", "🌌 Tối (19h - 23h)", "🌙 Khuya (23h - 05h)"]).dropna()
-                
-                block_report_rows = []
-                for idx, row in block_summary.iterrows():
-                    avg_t = round(row["Nhiệt độ (°C)"], 1)
-                    avg_h = round(row["Độ ẩm (%)"], 1)
-                    avg_v = round(row["VPD_raw"], 2)
-                    
-                    if avg_v < file_vpd_min:
-                        conclusion = "⚠️ CHƯA ĐẠT (Quá ẩm)"
-                        reason = f"Độ ẩm không khí tích tụ cao ({avg_h}%), cản trở quá trình thoát hơi nước. Đề xuất: Tăng cường thông gió."
-                    elif avg_v > file_vpd_max:
-                        conclusion = "🚨 CHƯA ĐẠT (Quá khô)"
-                        reason = f"Nhiệt độ cao ({avg_t}°C) và ẩm thấp làm cây mất nước nhanh. Đề xuất: Bật phun sương, kéo lưới cắt nắng."
-                    else:
-                        conclusion = "✅ ĐẠT (Lý tưởng)"
-                        reason = "Môi trường vi khí hậu cân biến đổi cân bằng. Cây quang hợp tốt. Duy trì vi khí hậu hiện tại."
-
-                    block_report_rows.append({
-                        "Buổi": idx,
-                        "Nhiệt độ TB": f"{avg_t} °C",
-                        "Độ ẩm TB": f"{avg_h} %",
-                        "VPD TB": f"{avg_v} kPa",
-                        "Đánh giá": conclusion,
-                        "Nguyên nhân & Đề xuất": reason
-                    })
-                    
-                df_block_report = pd.DataFrame(block_report_rows)
-                st.dataframe(df_block_report, use_container_width=True, hide_index=True)
-                
-        except Exception as e:
-            st.error(f"❌ Đã xảy ra lỗi trong quá trình đọc và xử lý file: {e}")
+                        df_raw_calc = df_raw_calc[df_raw_calc["datetime_internal"]
