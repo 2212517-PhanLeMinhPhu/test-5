@@ -201,6 +201,24 @@ def process_incoming_data(df_new):
         )
         send_discord_auto(msg)
 
+    # --- ĐOẠN ĐÃ ĐƯỢC VÁ LỖI CẮT KHUYẾT VÀ SAI LỀ ---
     if st.session_state.mqtt_df.empty:
         st.session_state.mqtt_df = df_normalized
     else:
+        st.session_state.mqtt_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True).drop_duplicates(subset=['STT', 'Thời gian']).tail(200)
+
+# --- CƠ CHẾ LẮNG NGHE MQTT ---
+def on_message(client, userdata, message):
+    try:
+        payload_str = message.payload.decode("utf-8")
+        new_data = json.loads(payload_str)
+        df_new = pd.DataFrame(new_data)
+        process_incoming_data(df_new)
+    except:
+        pass
+
+@st.cache_resource
+def start_mqtt_client():
+    mqtt_client = mqtt.Client()
+    mqtt_client.on_message = on_message
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT
