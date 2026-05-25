@@ -27,33 +27,28 @@ MQTT_TOPIC = "vuon_thong_minh/duy_tran/sensors"
 if "mqtt_df" not in st.session_state:
     st.session_state.mqtt_df = pd.DataFrame()
 
-# Trạng thái hoạt động của bộ giả lập (Mặc định là chạy tự động)
 if "is_running" not in st.session_state:
     st.session_state.is_running = True
 
-# Biến lưu vết trạm nào sẽ gửi ở giây thứ mấy
 if "current_station_index" not in st.session_state:
     st.session_state.current_station_index = 0
 
-# Biến dùng để kiểm tra nhịp tránh lặp dữ liệu khi tương tác giao diện
 if "last_processed_idx" not in st.session_state:
     st.session_state.last_processed_idx = -1
 
-# Lưu trữ link Discord Webhook trong bộ nhớ tạm
 if "discord_webhook_url" not in st.session_state:
     st.session_state.discord_webhook_url = ""
 
-# Danh sách 5 trạm trong hệ thống vườn
 STATIONS_LIST = ["1", "2", "3", "4", "5"]
 
 # =====================================================================
-# BỘ TỰ ĐỘNG LÀM MỚI (XUNG NHỊP CHUẨN 30 GIÂY)
+# BỘ TỰ ĐỘNG LÀM MỚI
 # =====================================================================
 if st.session_state.is_running:
     st_autorefresh(interval=30000, key="iot_refresh")
 
 # =====================================================================
-# BỘ ĐIỀU KHIỂN BẮT ĐẦU / DỪNG LẠI (PLAY / PAUSE BUTTONS)
+# BỘ ĐIỀU KHIỂN BẮT ĐẦU / DỪNG LẠI
 # =====================================================================
 st.subheader("🎮 Bộ Điều Khiển Hệ Thống")
 col_start, col_stop = st.columns(2)
@@ -72,29 +67,27 @@ with col_stop:
 if st.session_state.is_running:
     st.success("🤖 Hệ thống đang: **CHẠY TỰ ĐỘNG (Xung nhịp 30s chuẩn)**")
 else:
-    st.warning("⏸️ Hệ thống đang: **TẠM DỪNG QUÉT** (Đang giữ nguyên thông số hiển thị và CHẶN tin nhắn)")
+    st.warning("⏸️ Hệ thống đang: **TẠM DỪNG QUÉT**")
 
 # =====================================================================
-# CẤU HÌNH THANH TRƯỢT NGƯỠNG ĐỘNG & ĐƯỜNG DẪN DISCORD
+# CẤU HÌNH HỆ THỐNG
 # =====================================================================
 st.subheader("⚙️ Cài Đặt Hệ Thống")
 
-# 1. Nhập link Discord Webhook trực tiếp từ UI
 input_url = st.text_input(
     "🔗 Link Discord Webhook nhận thông báo:",
     value=st.session_state.discord_webhook_url,
     placeholder="Dán link https://discord.com/api/webhooks/... vào đây",
     type="password", 
-    help="Truy cập cài đặt kênh Discord -> Integrations -> Webhooks để lấy link này."
+    help="Truy cập cài đặt kênh Discord -> Integrations -> Webhooks để lấy link."
 )
 st.session_state.discord_webhook_url = input_url
 
 if st.session_state.discord_webhook_url:
-    st.caption("✅ Đã ghi nhận Link Discord Webhook (Đang chạy ngầm).")
+    st.caption("✅ Đã ghi nhận Link Discord Webhook.")
 else:
-    st.caption("⚠️ Chưa cấu hình nhận thông báo. Hệ thống chỉ hiển thị dữ liệu trên Webboard này.")
+    st.caption("⚠️ Chưa cấu hình nhận thông báo.")
 
-# 2. Các thanh trượt ngưỡng VPD
 low_threshold = st.slider("1. Ngưỡng VPD Thấp (Quá ẩm):", min_value=0.1, max_value=1.0, value=0.45, step=0.05, format="%.2f kPa")
 high_threshold = st.slider("2. Ngưỡng VPD Cao (Khô nóng):", min_value=1.0, max_value=3.0, value=1.70, step=0.05, format="%.2f kPa")
 
@@ -102,9 +95,8 @@ st.session_state.low_threshold = low_threshold
 st.session_state.high_threshold = high_threshold
 
 # =====================================================================
-# LOGIC TOÁN HỌC VÀ ĐÁNH GIÁ TRẠNG THÁI
+# LOGIC VÀ ĐÁNH GIÁ TRẠNG THÁI
 # =====================================================================
-
 def calculate_vpd(temp, humi):
     vp_sat = 0.61078 * np.exp((17.27 * temp) / (temp + 237.3))
     return float(np.clip(vp_sat * (1 - (humi / 100)), 0, None))
@@ -122,31 +114,31 @@ def evaluate_status(vpd, temp, humi, station_id, low_t, high_t):
     sid = str(station_id)
     
     if humi == 0:
-        return "🔌 Mất tín hiệu thiết bị", f"Trạm {sid} báo độ ẩm bằng 0%.", "Kiểm tra lại dây nguồn, giắc nối đầu dò."
+        return "🔌 Mất tín hiệu thiết bị", f"Trạm {sid} báo độ ẩm bằng 0%.", "Kiểm tra lại dây nguồn."
     
     if vpd > high_t and temp > 40.0 and humi < 40.0:
-        return "🔥 BÁO ĐỘNG: KHÔ NÓNG GẮT", f"Trạm {sid} vượt ngưỡng khô gắt cài đặt ({vpd} kPa).", "CHẠY RA KÉO LƯỚI LAN ĐEN CẤT NẮNG, BẬT PHUN SƯƠNG BÙ ẨM KHẨN CẤP!"
+        return "🔥 BÁO ĐỘNG: KHÔ NÓNG GẮT", f"Vượt ngưỡng khô gắt ({vpd} kPa).", "KÉO LƯỚI LAN, BẬT PHUN SƯƠNG BÙ ẨM!"
         
     if humi >= 99.5 or vpd == 0:
-        return "⚠️ THÔNG BÁO: BÃO HÒA ẨM", f"Trạm {sid} báo độ ẩm chạm trần {humi}%.", "Bật ngay quạt hút đuổi ẩm và ngừng tưới nước ngay!"
+        return "⚠️ THÔNG BÁO: BÃO HÒA ẨM", f"Độ ẩm chạm trần {humi}%.", "Bật quạt hút đuổi ẩm và ngừng tưới!"
 
     if vpd < low_t:
-        return "❌ Nhà kính quá ẩm", f"VPD thấp hơn mốc cài đặt ({vpd} < {low_t} kPa).", "Bật quạt đối lưu mạnh, mở rộng cửa hông để thoát hơi ẩm."
+        return "❌ Nhà kính quá ẩm", f"VPD thấp hơn cài đặt ({vpd} < {low_t} kPa).", "Bật quạt đối lưu, mở rộng cửa hông."
         
     elif vpd > high_t:
         if humi < 40.0:
-            return "❌ Môi trường khô hanh", f"VPD vượt ngưỡng cao ({vpd} kPa) do thiếu ẩm.", "Bật hệ thống phun sương giữa vườn để bù lại độ ẩm."
+            return "❌ Môi trường khô hanh", f"VPD vượt ngưỡng ({vpd} kPa) do thiếu ẩm.", "Bật phun sương giữa vườn."
         else:
-            return "❌ Nhiệt độ tăng cao", f"Nhiệt độ nhà màng hầm nóng ({temp}°C) làm đẩy VPD lên {vpd} kPa.", "Tăng thời gian tưới nhỏ giọt dưới gốc cấp nước cho rễ."
+            return "❌ Nhiệt độ tăng cao", f"Nhiệt độ nóng ({temp}°C) làm VPD lên {vpd} kPa.", "Tăng thời gian tưới dưới gốc."
 
     elif low_t <= vpd < (low_t + 0.1):
-        return "⚠️ CẢNH BÁO SỚM: SẮP QUÁ ẨM", f"VPD tiến sát mốc dưới ({vpd} kPa). Độ ẩm đang tăng nhanh.", "Nên tăng nhẹ nhiệt độ phòng hoặc bật quạt đối lưu để kéo VPD lên."
+        return "⚠️ CẢNH BÁO SỚM: SẮP QUÁ ẨM", f"VPD sát mốc dưới ({vpd} kPa).", "Bật quạt đối lưu để kéo VPD lên."
         
     elif (high_t - 0.1) <= vpd <= high_t:
-        return "⚠️ CẢNH BÁO SỚM: SẮP KHÔ NÓNG", f"VPD tiến sát mốc trên ({vpd} kPa). Môi trường đang khô dần.", "Nên tăng độ ẩm (phun sương nhẹ) hoặc kéo lưới lan giảm nhiệt độ phòng."
+        return "⚠️ CẢNH BÁO SỚM: SẮP KHÔ NÓNG", f"VPD sát mốc trên ({vpd} kPa).", "Phun sương nhẹ hoặc kéo lưới lan."
 
     else:
-        return "Môi trường hoàn hảo lý tưởng", f"VPD đạt điểm vàng quang hợp ({vpd} kPa).", "Thời điểm vàng để cây sinh trưởng tốt. Giữ nguyên chế độ vườn."
+        return "Môi trường hoàn hảo lý tưởng", f"VPD đạt điểm vàng ({vpd} kPa).", "Giữ nguyên chế độ vườn."
 
 def process_incoming_data(df_new):
     if df_new.empty:
@@ -158,67 +150,6 @@ def process_incoming_data(df_new):
     low_t = st.session_state.low_threshold
     high_t = st.session_state.high_threshold
 
-    time_col = 'Thời gian' if 'Thời gian' in df_new.columns else 'time'
-    stt_col = 'STT' if 'STT' in df_new.columns else 'station'
-
     df_normalized = df_new.copy()
     if 'time' in df_normalized.columns: df_normalized.rename(columns={'time': 'Thời gian'}, inplace=True)
-    if 'station' in df_normalized.columns: df_normalized.rename(columns={'station': 'STT'}, inplace=True)
-    if 'tempKK' in df_normalized.columns: df_normalized.rename(columns={'tempKK': 'Nhiệt độ'}, inplace=True)
-    if 'humiKK' in df_normalized.columns: df_normalized.rename(columns={'humiKK': 'Độ ẩm'}, inplace=True)
-    if 'Nhiệt Độ' in df_normalized.columns: df_normalized.rename(columns={'Nhiệt Độ': 'Nhiệt độ'}, inplace=True)
-
-    df_normalized['STT'] = df_normalized['STT'].astype(str)
-    df_normalized['Nhiệt độ'] = pd.to_numeric(df_normalized['Nhiệt độ'])
-    df_normalized['Độ ẩm'] = pd.to_numeric(df_normalized['Độ ẩm'])
-
-    def scale_value(row, col_name):
-        val = row[col_name]
-        if row['STT'] != "5" and val > 100:
-            return val / 10.0
-        return val
-
-    df_normalized['Nhiệt độ'] = df_normalized.apply(lambda r: scale_value(r, 'Nhiệt độ'), axis=1)
-    df_normalized['Độ ẩm'] = df_normalized.apply(lambda r: scale_value(r, 'Độ ẩm'), axis=1)
-    df_normalized['VPD'] = df_normalized.apply(lambda r: round(calculate_vpd(r['Nhiệt độ'], r['Độ ẩm']), 3), axis=1)
-
-    for _, row in df_normalized.iterrows():
-        station_id = row['STT']
-        t_val = row['Nhiệt độ']
-        h_val = row['Độ ẩm']
-        vpd_val = row['VPD']
-        time_log = str(row['Thời gian'])
-        
-        status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_t, high_t)
-        
-        msg = (
-            f"📡 **[MÔ PHỎNG REALTIME] TRẠM {station_id}/5**\n"
-            f"⏱ Cập nhật: `{time_log}`\n"
-            f"🌡 Nhiệt độ: {t_val}°C | 💧 Độ ẩm: {h_val}%\n"
-            f"💨 Chỉ số VPD: **{vpd_val} kPa**\n"
-            f"📢 Trạng thái: **{status}**\n"
-            f"🛠 Hướng xử lý: *{action}*"
-        )
-        send_discord_auto(msg)
-
-    # --- ĐOẠN ĐÃ ĐƯỢC VÁ LỖI CẮT KHUYẾT VÀ SAI LỀ ---
-    if st.session_state.mqtt_df.empty:
-        st.session_state.mqtt_df = df_normalized
-    else:
-        st.session_state.mqtt_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True).drop_duplicates(subset=['STT', 'Thời gian']).tail(200)
-
-# --- CƠ CHẾ LẮNG NGHE MQTT ---
-def on_message(client, userdata, message):
-    try:
-        payload_str = message.payload.decode("utf-8")
-        new_data = json.loads(payload_str)
-        df_new = pd.DataFrame(new_data)
-        process_incoming_data(df_new)
-    except:
-        pass
-
-@st.cache_resource
-def start_mqtt_client():
-    mqtt_client = mqtt.Client()
-    mqtt_client.on_message = on_message
-    mqtt_client.connect(MQTT_BROKER, MQTT_PORT
+    if 'station' in df
