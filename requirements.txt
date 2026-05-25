@@ -1,7 +1,5 @@
 streamlit
 pandas
-numpy
-paho-mqtt
+altair
 requests
-plotly
-streamlit-autorefresh
+openpyxl
