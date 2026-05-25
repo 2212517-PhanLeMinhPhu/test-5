@@ -29,7 +29,7 @@ MQTT_TOPIC = "vuon_thong_minh/duy_tran/sensors"
 
 # --- KHỞI TẠO STATE ---
 if "mqtt_df" not in st.session_state:
-    st.session_state.mqtt_df = pd.DataFrame()
+    st.session_state.mqtt_df = pd.DataFrame(columns=['Thời gian', 'STT', 'Nhiệt độ', 'Độ ẩm', 'VPD'])
 
 if "is_running" not in st.session_state:
     st.session_state.is_running = True
@@ -73,8 +73,9 @@ with col_stop:
 
 with col_clear:
     if st.button("🗑️ XÓA CACHE", use_container_width=True):
-        st.session_state.mqtt_df = pd.DataFrame()
+        st.session_state.mqtt_df = pd.DataFrame(columns=['Thời gian', 'STT', 'Nhiệt độ', 'Độ ẩm', 'VPD'])
         st.session_state.last_uploaded_file = None  
+        st.session_state.last_processed_idx = -1
         st.rerun()
 
 if st.session_state.is_running:
@@ -150,6 +151,26 @@ def evaluate_status(vpd, temp, humi, station_id, low_t, high_t):
     else:
         return ("Môi trường lý tưởng", f"VPD điểm vàng ({vpd} kPa).", "Giữ nguyên chế độ.")
 
+def clean_and_parse_datetime(x):
+    """Chuyển đổi mọi định dạng thời gian đầu vào về Datetime chuẩn không múi giờ (tz-naive)"""
+    if pd.isna(x):
+        return pd.NaT
+    try:
+        x_str = str(x).strip()
+        # Nếu đầu vào chỉ có giờ phút giây (HH:MM:SS)
+        if len(x_str) == 8 and ":" in x_str and x_str.count(":") == 2:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            dt = pd.to_datetime(f"{today_str} {x_str}", errors='coerce')
+        else:
+            dt = pd.to_datetime(x_str, errors='coerce')
+        
+        # KHỬ MÚI GIỜ: Nếu đối tượng có múi giờ (+07:00, Z...), ép về dạng không múi giờ để đồng nhất
+        if pd.notna(dt) and hasattr(dt, 'tz') and dt.tz is not None:
+            dt = dt.tz_localize(None)
+        return dt
+    except Exception:
+        return pd.NaT
+
 def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     if df_new.empty:
         return
@@ -160,7 +181,6 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     high_t = st.session_state.high_threshold
     df_normalized = df_new.copy()
 
-    # Tạo từ điển map tên cột một cách đồng bộ nhất để tránh tạo cột trùng lặp
     rename_dict = {}
     for col in df_normalized.columns:
         col_str = str(col).strip()
@@ -174,13 +194,10 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
             rename_dict[col] = 'Độ ẩm'
 
     df_normalized.rename(columns=rename_dict, inplace=True)
-    
-    # SỬA LỖI QUAN TRỌNG: Loại bỏ triệt để các cột trùng tên sau khi đổi tên (Fix lỗi arg must be a list...)
     df_normalized = df_normalized.loc[:, ~df_normalized.columns.duplicated()]
 
-    # Đảm bảo các cột tối thiểu phải tồn tại
     if 'Thời gian' not in df_normalized.columns:
-        df_normalized['Thời gian'] = datetime.now().strftime("%H:%M:%S")
+        df_normalized['Thời gian'] = datetime.now()
     if 'STT' not in df_normalized.columns:
         df_normalized['STT'] = "1"
     if 'Nhiệt độ' not in df_normalized.columns:
@@ -188,6 +205,10 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
     if 'Độ ẩm' not in df_normalized.columns:
         df_normalized['Độ ẩm'] = 70.0
 
+    # Chuẩn hóa đồng điệu kiểu dữ liệu thời gian NGAY TỪ ĐẦU
+    df_normalized['Thời gian'] = df_normalized['Thời gian'].apply(clean_and_parse_datetime)
+    df_normalized = df_normalized.dropna(subset=['Thời gian'])
+    
     df_normalized['STT'] = df_normalized['STT'].astype(str)
     df_normalized['Nhiệt độ'] = pd.to_numeric(df_normalized['Nhiệt độ'], errors='coerce').fillna(28.0)
     df_normalized['Độ ẩm'] = pd.to_numeric(df_normalized['Độ ẩm'], errors='coerce').fillna(70.0)
@@ -208,7 +229,7 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
             t_val = row['Nhiệt độ']
             h_val = row['Độ ẩm']
             vpd_val = row['VPD']
-            time_log = str(row['Thời gian'])
+            time_log = row['Thời gian'].strftime("%H:%M:%S")
             status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_t, high_t)
             
             msg = (
@@ -221,12 +242,13 @@ def process_incoming_data(df_new, silent=False, ignore_running_check=False):
             )
             send_discord_auto(msg)
 
+    # Đảm bảo dataframe gốc luôn có cùng cấu trúc kiểu dữ liệu thời gian
     if st.session_state.mqtt_df.empty:
-        st.session_state.mqtt_df = df_normalized
+        st.session_state.mqtt_df = df_normalized[['Thời gian', 'STT', 'Nhiệt độ', 'Độ ẩm', 'VPD']]
     else:
-        updated_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True)
+        st.session_state.mqtt_df['Thời gian'] = st.session_state.mqtt_df['Thời gian'].apply(clean_and_parse_datetime)
+        updated_df = pd.concat([st.session_state.mqtt_df, df_normalized[['Thời gian', 'STT', 'Nhiệt độ', 'Độ ẩm', 'VPD']]], ignore_index=True)
         updated_df = updated_df.drop_duplicates(subset=['STT', 'Thời gian'])
-        # Mở rộng tail lên 20.000 dòng để chứa thoải mái dữ liệu lớn từ file tải lên
         st.session_state.mqtt_df = updated_df.tail(20000)
 
 # =====================================================================
@@ -240,7 +262,7 @@ def generate_initial_history():
             stt_idx = int(stt) - 1
             st_time = now - timedelta(seconds=(i * 150)) + timedelta(seconds=(stt_idx * 30))
             records.append({
-                "Thời gian": st_time.strftime("%H:%M:%S"),
+                "Thời gian": st_time,
                 "STT": stt,
                 "Nhiệt độ": round(random.uniform(27.0, 33.0), 1),
                 "Độ ẩm": round(random.uniform(60.0, 78.0), 1)
@@ -288,7 +310,7 @@ with col2:
     st.metric(label="⏳ Trạm xếp hàng", value=f"Trạm {next_station}")
 
 if st.session_state.is_running and st.session_state.last_processed_idx != idx:
-    current_time_str = datetime.now().strftime("%H:%M:%S")
+    current_time_dt = datetime.now()
     scenarios = ["NORMAL", "MAX_HUMIDITY", "EXTREME_HOT", "LOST_SIGNAL"]
     weights = [0.85, 0.07, 0.05, 0.03]
     scenario = random.choices(scenarios, weights=weights, k=1)[0]
@@ -307,9 +329,9 @@ if st.session_state.is_running and st.session_state.last_processed_idx != idx:
         humi = 0.0
 
     if active_station == "5":
-        mock_packet = [{"time": current_time_str, "station": "5", "tempKK": temp, "humiKK": humi}]
+        mock_packet = [{"time": current_time_dt, "station": "5", "tempKK": temp, "humiKK": humi}]
     else:
-        mock_packet = [{"Thời gian": current_time_str, "STT": active_station, "Nhiệt độ": temp, "Độ ẩm": humi}]
+        mock_packet = [{"Thời gian": current_time_dt, "STT": active_station, "Nhiệt độ": temp, "Độ ẩm": humi}]
         
     df_single_step = pd.DataFrame(mock_packet)
     process_incoming_data(df_single_step)
@@ -338,7 +360,7 @@ else:
     st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
 
 # =====================================================================
-# 📥 NHẬP DỮ LIỆU TỪ FILE (Cơ chế đọc đa luồng an toàn)
+# 📥 NHẬP DỮ LIỆU TỪ FILE 
 # =====================================================================
 st.subheader("📥 Nhập Dữ Liệu Ngoài Từ File")
 uploaded_file = st.file_uploader(
@@ -352,7 +374,6 @@ if uploaded_file is not None:
             if uploaded_file.name.endswith('.csv'):
                 df_upload = pd.read_csv(uploaded_file)
             else:
-                # Thử đọc theo nhiều cấu trúc cấu hình JSON khác nhau để bao quát file lớn
                 try:
                     df_upload = pd.read_json(uploaded_file)
                 except Exception:
@@ -391,23 +412,16 @@ if not chart_df.empty and len(chart_df) > 0:
     metric_map = {"Chỉ số VPD (kPa)": "VPD", "Nhiệt độ (°C)": "Nhiệt độ", "Độ ẩm (%)": "Độ ẩm"}
     target_column = metric_map[select_metric]
     
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    def to_plotly_dt(x):
-        x_str = str(x).strip()
-        if len(x_str) == 8 and ":" in x_str:
-            return pd.to_datetime(f"{today_str} {x_str}", errors='coerce')
-        return pd.to_datetime(x_str, errors='coerce')
-
-    chart_df['Thời gian_Plotly'] = chart_df['Thời gian'].apply(to_plotly_dt)
-    chart_df = chart_df.dropna(subset=['Thời gian_Plotly'])
-    chart_df = chart_df.sort_values(by="Thời gian_Plotly")
+    chart_df['Thời gian'] = chart_df['Thời gian'].apply(clean_and_parse_datetime)
+    chart_df = chart_df.dropna(subset=['Thời gian'])
+    chart_df = chart_df.sort_values(by="Thời gian")
 
     plot_df = chart_df[chart_df["STT"] == str(active_station)].copy()
     
     if not plot_df.empty:
         fig = px.line(
-            plot_df, x="Thời gian_Plotly", y=target_column, markers=True,
-            labels={"Thời gian_Plotly": "Thời gian quét", target_column: select_metric}, template="plotly_white"
+            plot_df, x="Thời gian", y=target_column, markers=True,
+            labels={"Thời gian": "Thời gian quét", target_column: select_metric}, template="plotly_white"
         )
         fig.update_traces(line_color='#1f77b4', line_width=3, marker=dict(size=8, color='#ff4b4b'))
         title_text = f"<b>Diễn biến {select_metric} - Tự Động Theo Trạm {active_station} (Đang hoạt động)</b>"
@@ -444,13 +458,20 @@ for s_id in STATIONS_LIST:
         }
         rows_list.append(item)
     else:
-        last_row = s_df.sort_values(by='Thời gian').iloc[-1]
+        s_df_sorted = s_df.copy()
+        s_df_sorted['Thời gian'] = s_df_sorted['Thời gian'].apply(clean_and_parse_datetime)
+        last_row = s_df_sorted.sort_values(by='Thời gian').iloc[-1]
+        
         t_v = last_row['Nhiệt độ']
         h_v = last_row['Độ ẩm']
         v_v = last_row['VPD']
         stt, rsn, act = evaluate_status(v_v, t_v, h_v, s_id, low_threshold, high_threshold)
+        
+        # Chuyển đổi định dạng hiển thị thành chuỗi giờ giấc trên bảng cho dễ nhìn
+        display_time = last_row['Thời gian'].strftime("%H:%M:%S") if pd.notna(last_row['Thời gian']) else "-"
+        
         item = {
-            "Thời gian": last_row['Thời gian'], "Số Trạm": f"Trạm {s_id}",
+            "Thời gian": display_time, "Số Trạm": f"Trạm {s_id}",
             "Nhiệt độ (°C)": t_v, "Độ ẩm (%)": h_v, "VPD (kPa)": v_v,
             "Trạng Thái Vườn": stt, "Lý Do Cảm Biến": rsn, "Khắc Phục": act
         }
