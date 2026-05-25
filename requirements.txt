@@ -1,5 +1,7 @@
+streamlit
+pandas
+numpy
 paho-mqtt
 requests
-numpy
-pandas
+plotly
 streamlit-autorefresh
