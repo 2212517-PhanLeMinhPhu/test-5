@@ -77,9 +77,8 @@ st.subheader("⚙️ Cài Đặt Hệ Thống")
 input_url = st.text_input(
     "🔗 Link Discord Webhook nhận thông báo:",
     value=st.session_state.discord_webhook_url,
-    placeholder="Dán link https://discord.com/api/webhooks/... vào đây",
-    type="password", 
-    help="Truy cập cài đặt kênh Discord -> Integrations -> Webhooks để lấy link."
+    placeholder="Dán link webhook vào đây",
+    type="password"
 )
 st.session_state.discord_webhook_url = input_url
 
@@ -88,8 +87,14 @@ if st.session_state.discord_webhook_url:
 else:
     st.caption("⚠️ Chưa cấu hình nhận thông báo.")
 
-low_threshold = st.slider("1. Ngưỡng VPD Thấp (Quá ẩm):", min_value=0.1, max_value=1.0, value=0.45, step=0.05, format="%.2f kPa")
-high_threshold = st.slider("2. Ngưỡng VPD Cao (Khô nóng):", min_value=1.0, max_value=3.0, value=1.70, step=0.05, format="%.2f kPa")
+low_threshold = st.slider(
+    "1. Ngưỡng VPD Thấp (Quá ẩm):", 
+    min_value=0.1, max_value=1.0, value=0.45, step=0.05, format="%.2f kPa"
+)
+high_threshold = st.slider(
+    "2. Ngưỡng VPD Cao (Khô nóng):", 
+    min_value=1.0, max_value=3.0, value=1.70, step=0.05, format="%.2f kPa"
+)
 
 st.session_state.low_threshold = low_threshold
 st.session_state.high_threshold = high_threshold
@@ -103,42 +108,42 @@ def calculate_vpd(temp, humi):
 
 def send_discord_auto(message):
     webhook_url = st.session_state.get("discord_webhook_url", "")
-    if not webhook_url or "discord.com/api/webhooks" not in webhook_url:
+    if not webhook_url or "discord" not in webhook_url:
         return
     try: 
         requests.post(webhook_url, json={"content": message}, timeout=2)
-    except: 
+    except Exception: 
         pass
 
 def evaluate_status(vpd, temp, humi, station_id, low_t, high_t):
     sid = str(station_id)
     
     if humi == 0:
-        return "🔌 Mất tín hiệu thiết bị", f"Trạm {sid} báo độ ẩm bằng 0%.", "Kiểm tra lại dây nguồn."
+        return "🔌 Mất tín hiệu", f"Trạm {sid} báo độ ẩm 0%.", "Kiểm tra lại dây nguồn."
     
     if vpd > high_t and temp > 40.0 and humi < 40.0:
-        return "🔥 BÁO ĐỘNG: KHÔ NÓNG GẮT", f"Vượt ngưỡng khô gắt ({vpd} kPa).", "KÉO LƯỚI LAN, BẬT PHUN SƯƠNG BÙ ẨM!"
+        return "🔥 BÁO ĐỘNG KHÔ NÓNG", f"Vượt ngưỡng khô ({vpd} kPa).", "KÉO LƯỚI LAN, PHUN SƯƠNG!"
         
     if humi >= 99.5 or vpd == 0:
-        return "⚠️ THÔNG BÁO: BÃO HÒA ẨM", f"Độ ẩm chạm trần {humi}%.", "Bật quạt hút đuổi ẩm và ngừng tưới!"
+        return "⚠️ THÔNG BÁO BÃO HÒA", f"Độ ẩm chạm {humi}%.", "Bật quạt hút, ngừng tưới!"
 
     if vpd < low_t:
-        return "❌ Nhà kính quá ẩm", f"VPD thấp hơn cài đặt ({vpd} < {low_t} kPa).", "Bật quạt đối lưu, mở rộng cửa hông."
+        return "❌ Nhà kính quá ẩm", f"VPD thấp ({vpd} kPa).", "Bật quạt đối lưu, mở cửa."
         
     elif vpd > high_t:
         if humi < 40.0:
-            return "❌ Môi trường khô hanh", f"VPD vượt ngưỡng ({vpd} kPa) do thiếu ẩm.", "Bật phun sương giữa vườn."
+            return "❌ Môi trường khô hanh", f"VPD cao ({vpd} kPa).", "Bật phun sương giữa vườn."
         else:
-            return "❌ Nhiệt độ tăng cao", f"Nhiệt độ nóng ({temp}°C) làm VPD lên {vpd} kPa.", "Tăng thời gian tưới dưới gốc."
+            return "❌ Nhiệt độ tăng cao", f"Nhiệt độ ({temp}°C).", "Tăng tưới dưới gốc."
 
     elif low_t <= vpd < (low_t + 0.1):
-        return "⚠️ CẢNH BÁO SỚM: SẮP QUÁ ẨM", f"VPD sát mốc dưới ({vpd} kPa).", "Bật quạt đối lưu để kéo VPD lên."
+        return "⚠️ CẢNH BÁO: SẮP QUÁ ẨM", f"VPD sát dưới ({vpd} kPa).", "Bật quạt đối lưu."
         
     elif (high_t - 0.1) <= vpd <= high_t:
-        return "⚠️ CẢNH BÁO SỚM: SẮP KHÔ NÓNG", f"VPD sát mốc trên ({vpd} kPa).", "Phun sương nhẹ hoặc kéo lưới lan."
+        return "⚠️ CẢNH BÁO: SẮP KHÔ NÓNG", f"VPD sát trên ({vpd} kPa).", "Phun sương nhẹ."
 
     else:
-        return "Môi trường hoàn hảo lý tưởng", f"VPD đạt điểm vàng ({vpd} kPa).", "Giữ nguyên chế độ vườn."
+        return "Môi trường lý tưởng", f"VPD điểm vàng ({vpd} kPa).", "Giữ nguyên chế độ."
 
 def process_incoming_data(df_new):
     if df_new.empty:
@@ -149,7 +154,255 @@ def process_incoming_data(df_new):
 
     low_t = st.session_state.low_threshold
     high_t = st.session_state.high_threshold
-
     df_normalized = df_new.copy()
-    if 'time' in df_normalized.columns: df_normalized.rename(columns={'time': 'Thời gian'}, inplace=True)
-    if 'station' in df
+
+    # Đổi tên cột an toàn
+    if 'time' in df_normalized.columns:
+        df_normalized.rename(columns={'time': 'Thời gian'}, inplace=True)
+    if 'station' in df_normalized.columns:
+        df_normalized.rename(columns={'station': 'STT'}, inplace=True)
+    if 'tempKK' in df_normalized.columns:
+        df_normalized.rename(columns={'tempKK': 'Nhiệt độ'}, inplace=True)
+    if 'humiKK' in df_normalized.columns:
+        df_normalized.rename(columns={'humiKK': 'Độ ẩm'}, inplace=True)
+    if 'Nhiệt Độ' in df_normalized.columns:
+        df_normalized.rename(columns={'Nhiệt Độ': 'Nhiệt độ'}, inplace=True)
+
+    # Chuyển kiểu dữ liệu
+    df_normalized['STT'] = df_normalized['STT'].astype(str)
+    df_normalized['Nhiệt độ'] = pd.to_numeric(df_normalized['Nhiệt độ'])
+    df_normalized['Độ ẩm'] = pd.to_numeric(df_normalized['Độ ẩm'])
+
+    # Hàm chia tỷ lệ an toàn
+    def scale_value(row, col_name):
+        val = row[col_name]
+        if row['STT'] != "5" and val > 100:
+            return val / 10.0
+        return val
+
+    df_normalized['Nhiệt độ'] = df_normalized.apply(lambda r: scale_value(r, 'Nhiệt độ'), axis=1)
+    df_normalized['Độ ẩm'] = df_normalized.apply(lambda r: scale_value(r, 'Độ ẩm'), axis=1)
+    df_normalized['VPD'] = df_normalized.apply(lambda r: round(calculate_vpd(r['Nhiệt độ'], r['Độ ẩm']), 3), axis=1)
+
+    for _, row in df_normalized.iterrows():
+        station_id = row['STT']
+        t_val = row['Nhiệt độ']
+        h_val = row['Độ ẩm']
+        vpd_val = row['VPD']
+        time_log = str(row['Thời gian'])
+        
+        status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_t, high_t)
+        
+        msg = (
+            f"📡 **[REALTIME] TRẠM {station_id}/5**\n"
+            f"⏱ Cập nhật: `{time_log}`\n"
+            f"🌡 Nhiệt độ: {t_val}°C | 💧 Độ ẩm: {h_val}%\n"
+            f"💨 VPD: **{vpd_val} kPa**\n"
+            f"📢 Trạng thái: **{status}**\n"
+            f"🛠 Xử lý: *{action}*"
+        )
+        send_discord_auto(msg)
+
+    # Nối dữ liệu cẩn thận để tránh dòng quá dài
+    if st.session_state.mqtt_df.empty:
+        st.session_state.mqtt_df = df_normalized
+    else:
+        updated_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True)
+        updated_df = updated_df.drop_duplicates(subset=['STT', 'Thời gian'])
+        st.session_state.mqtt_df = updated_df.tail(200)
+
+# --- CƠ CHẾ LẮNG NGHE MQTT ---
+def on_message(client, userdata, message):
+    try:
+        payload_str = message.payload.decode("utf-8")
+        new_data = json.loads(payload_str)
+        df_new = pd.DataFrame(new_data)
+        process_incoming_data(df_new)
+    except Exception:
+        pass
+
+@st.cache_resource
+def start_mqtt_client():
+    mqtt_client = mqtt.Client()
+    mqtt_client.on_message = on_message
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    mqtt_client.subscribe(MQTT_TOPIC)
+    mqtt_client.loop_start()
+    return mqtt_client
+
+_ = start_mqtt_client()
+
+# =====================================================================
+# XỬ LÝ ĐIỀU PHỐI XUNG NHỊP CHUẨN
+# =====================================================================
+st.subheader("⏱️ Tiến Độ Điều Phối Xung Nhịp")
+
+idx = st.session_state.current_station_index
+active_station = STATIONS_LIST[idx]
+next_station = STATIONS_LIST[(idx + 1) % len(STATIONS_LIST)]
+
+col1, col2 = st.columns(2)
+with col1:
+    st.metric(label="🟢 Trạm vừa xử lý", value=f"Trạm {active_station}")
+with col2:
+    st.metric(label="⏳ Trạm xếp hàng", value=f"Trạm {next_station}")
+
+if st.session_state.is_running and st.session_state.last_processed_idx != idx:
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    if active_station == "1":
+        st.session_state.mqtt_df = pd.DataFrame()
+
+    scenarios = ["NORMAL", "MAX_HUMIDITY", "EXTREME_HOT", "LOST_SIGNAL"]
+    weights = [0.85, 0.07, 0.05, 0.03]
+    scenario = random.choices(scenarios, weights=weights, k=1)[0]
+    
+    if scenario == "NORMAL":
+        temp = round(random.uniform(26.5, 35.5), 1)
+        humi = round(random.uniform(55.0, 82.0), 1)
+    elif scenario == "EXTREME_HOT":
+        temp = round(random.uniform(40.5, 43.5), 1)
+        humi = round(random.uniform(25.0, 38.0), 1)
+    elif scenario == "MAX_HUMIDITY":
+        temp = round(random.uniform(19.0, 24.0), 1)
+        humi = round(random.uniform(99.5, 100.0), 1)
+    elif scenario == "LOST_SIGNAL":
+        temp = round(random.uniform(25.0, 32.0), 1)
+        humi = 0.0
+
+    if active_station == "5":
+        mock_packet = [{
+            "time": current_time_str, 
+            "station": "5", 
+            "tempKK": temp, 
+            "humiKK": humi
+        }]
+    else:
+        mock_packet = [{
+            "Thời gian": current_time_str, 
+            "STT": active_station, 
+            "Nhiệt độ": temp, 
+            "Độ ẩm": humi
+        }]
+        
+    df_single_step = pd.DataFrame(mock_packet)
+    process_incoming_data(df_single_step)
+    
+    st.session_state.last_processed_idx = idx
+    st.session_state.current_station_index = (idx + 1) % len(STATIONS_LIST)
+
+# =====================================================================
+# BỘ ĐẾM NGƯỢC UI REALTIME
+# =====================================================================
+if st.session_state.is_running:
+    countdown_html = """
+    <div style="font-family: sans-serif; background-color: #f0f2f6; padding: 12px; border-radius: 8px; border-left: 5px solid #1f77b4; margin-bottom: 15px;">
+        <span style="color: #1f77b4; font-weight: bold;">⏱️ ĐỒNG HỒ CHU KỲ QUÉT:</span> 
+        <span id="countdown-timer" style="font-size: 16px; font-weight: bold; color: #ff4b4b;">30</span> giây...
+    </div>
+    <script>
+        let timeLeft = 30;
+        const timerElement = document.getElementById('countdown-timer');
+        const interval = setInterval(function() {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                clearInterval(interval);
+                timerElement.innerText = "0";
+            } else {
+                timerElement.innerText = timeLeft;
+            }
+        }, 1000);
+    </script>
+    """
+    components.html(countdown_html, height=55)
+else:
+    st.info("⏸️ **Bộ đếm thời gian đang dừng.**")
+
+# =====================================================================
+# BỘ VẼ BIỂU ĐỒ ĐƯỜNG THẲNG REAL-TIME
+# =====================================================================
+st.subheader("📈 Biểu Đồ Diễn Biến Real-Time")
+
+chart_df = st.session_state.mqtt_df.copy()
+
+if not chart_df.empty and len(chart_df) > 0:
+    select_metric = st.selectbox(
+        "📊 Chọn thông số hiển thị:", 
+        options=["Chỉ số VPD (kPa)", "Nhiệt độ (°C)", "Độ ẩm (%)"]
+    )
+    
+    metric_map = {
+        "Chỉ số VPD (kPa)": "VPD",
+        "Nhiệt độ (°C)": "Nhiệt độ",
+        "Độ ẩm (%)": "Độ ẩm"
+    }
+    target_column = metric_map[select_metric]
+    chart_df = chart_df.sort_values(by="Thời gian")
+    
+    fig = px.line(
+        chart_df,
+        x="Thời gian",
+        y=target_column,
+        color="STT",
+        markers=True,
+        labels={"Thời gian": "Thời gian quét", target_column: select_metric, "STT": "Mã Trạm"},
+        template="plotly_white"
+    )
+    
+    fig.update_layout(
+        margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("📊 Hệ thống đang tích lũy dữ liệu vẽ biểu đồ...")
+
+# =====================================================================
+# BẢNG TRẠNG THÁI
+# =====================================================================
+df = st.session_state.mqtt_df.copy()
+
+st.subheader("🔔 Bảng Trạng Thái 5 Trạm")
+processed_chunks = []
+
+for station_id in STATIONS_LIST:
+    station_df = pd.DataFrame()
+    if not df.empty:
+        station_df = df[df['STT'].astype(str) == str(station_id)]
+    
+    if station_df.empty:
+        processed_chunks.append(pd.DataFrame([{
+            "Thời gian": "Đang chờ lượt...",
+            "Số Trạm": f"Trạm {station_id}",
+            "Nhiệt độ (°C)": None,
+            "Độ ẩm (%)": None,
+            "VPD (kPa)": None,
+            "Trạng Thái Vườn": "💤 Đang chờ quét",
+            "Lý Do Cảm Biến": "-",
+            "Khắc Phục": "-"
+        }]))
+        continue
+        
+    row = station_df.sort_values(by='Thời gian', ascending=True).tail(1).iloc[0]
+    
+    t_val = row['Nhiệt độ']
+    h_val = row['Độ ẩm']
+    vpd_val = row['VPD']
+    
+    status, reason, action = evaluate_status(vpd_val, t_val, h_val, station_id, low_threshold, high_threshold)
+    
+    processed_chunks.append(pd.DataFrame([{
+        "Thời gian": row['Thời gian'],
+        "Số Trạm": f"Trạm {station_id}",
+        "Nhiệt độ (°C)": t_val,
+        "Độ ẩm (%)": h_val,
+        "VPD (kPa)": vpd_val,
+        "Trạng Thái Vườn": status,
+        "Lý Do Cảm Biến": reason,
+        "Khắc Phục": action
+    }]))
+        
+if processed_chunks:
+    final_table = pd.concat(processed_chunks, ignore_index=True)
+    st.dataframe(final_table, use_container_width=True)
