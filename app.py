@@ -5,7 +5,7 @@ import paho.mqtt.client as mqtt
 import requests
 import json
 import random  
-import plotly.express as px  # Thêm thư viện vẽ biểu đồ tương tác
+import plotly.express as px  
 import streamlit.components.v1 as components
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
@@ -23,7 +23,7 @@ MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
 MQTT_TOPIC = "vuon_thong_minh/duy_tran/sensors"
 
-# --- KHỔI TẠO STATE ---
+# --- KHỞI TẠO STATE ---
 if "mqtt_df" not in st.session_state:
     st.session_state.mqtt_df = pd.DataFrame()
 
@@ -168,12 +168,10 @@ def process_incoming_data(df_new):
     if 'humiKK' in df_normalized.columns: df_normalized.rename(columns={'humiKK': 'Độ ẩm'}, inplace=True)
     if 'Nhiệt Độ' in df_normalized.columns: df_normalized.rename(columns={'Nhiệt Độ': 'Nhiệt độ'}, inplace=True)
 
-    # Đồng bộ ép kiểu dữ liệu sạch cho DataFrame lịch sử
     df_normalized['STT'] = df_normalized['STT'].astype(str)
     df_normalized['Nhiệt độ'] = pd.to_numeric(df_normalized['Nhiệt độ'])
     df_normalized['Độ ẩm'] = pd.to_numeric(df_normalized['Độ ẩm'])
 
-    # Chuẩn hóa chia 10 cho các trạm thu phát số nguyên thô
     def scale_value(row, col_name):
         val = row[col_name]
         if row['STT'] != "5" and val > 100:
@@ -182,8 +180,6 @@ def process_incoming_data(df_new):
 
     df_normalized['Nhiệt độ'] = df_normalized.apply(lambda r: scale_value(r, 'Nhiệt độ'), axis=1)
     df_normalized['Độ ẩm'] = df_normalized.apply(lambda r: scale_value(r, 'Độ ẩm'), axis=1)
-    
-    # Tính toán luôn cột giá trị VPD đưa vào lưu trữ lịch sử để vẽ biểu đồ
     df_normalized['VPD'] = df_normalized.apply(lambda r: round(calculate_vpd(r['Nhiệt độ'], r['Độ ẩm']), 3), axis=1)
 
     for _, row in df_normalized.iterrows():
@@ -208,54 +204,3 @@ def process_incoming_data(df_new):
     if st.session_state.mqtt_df.empty:
         st.session_state.mqtt_df = df_normalized
     else:
-        st.session_state.mqtt_df = pd.concat([st.session_state.mqtt_df, df_normalized], ignore_index=True).drop_duplicates(subset=['STT', 'Thời gian']).tail(200)
-
-# --- CƠ CHẾ LẮNG NGHE MQTT ---
-def on_message(client, userdata, message):
-    try:
-        payload_str = message.payload.decode("utf-8")
-        new_data = json.loads(payload_str)
-        df_new = pd.DataFrame(new_data)
-        process_incoming_data(df_new)
-    except:
-        pass
-
-@st.cache_resource
-def start_mqtt_client():
-    mqtt_client = mqtt.Client()
-    mqtt_client.on_message = on_message
-    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    mqtt_client.subscribe(MQTT_TOPIC)
-    mqtt_client.loop_start()
-    return mqtt_client
-
-_ = start_mqtt_client()
-
-# =====================================================================
-# XỬ LÝ ĐIỀU PHỐI XUNG NHỊP CHUẨN THEO TICK AUTOREFRESH
-# =====================================================================
-st.subheader("⏱️ Tiến Độ Điều Phối Xung Nhịp")
-
-idx = st.session_state.current_station_index
-active_station = STATIONS_LIST[idx]
-next_station = STATIONS_LIST[(idx + 1) % len(STATIONS_LIST)]
-
-col1, col2 = st.columns(2)
-with col1:
-    st.metric(label="🟢 Trạm vừa xử lý dữ liệu", value=f"Trạm {active_station}")
-with col2:
-    st.metric(label="⏳ Trạm xếp hàng kế tiếp", value=f"Trạm {next_station}")
-
-if st.session_state.is_running and st.session_state.last_processed_idx != idx:
-    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    if active_station == "1":
-        st.session_state.mqtt_df = pd.DataFrame()
-
-    scenarios = ["NORMAL", "MAX_HUMIDITY", "EXTREME_HOT", "LOST_SIGNAL"]
-    weights = [0.85, 0.07, 0.05, 0.03]
-    scenario = random.choices(scenarios, weights=weights, k=1)[0]
-    
-    if scenario == "NORMAL":
-        temp = round(random.uniform(26.5, 35.5), 1)
-        humi = round(random.uniform(55
