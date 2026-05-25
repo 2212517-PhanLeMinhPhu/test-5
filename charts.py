@@ -46,7 +46,7 @@ def draw_vpd_chart(df, vpd_min, vpd_max):
         tooltip=['Hiển thị Giờ', 'Nhiệt độ (°C)', 'Độ ẩm (%)', 'VPD (kPa)', 'Trạng thái']
     )
 
-    return alt.layer(bg_under, bg_ideal, bg_over, line, points).properties(height=240).interactive().configure_axis(labelAngle=0)
+    return alt.layer(bg_under, bg_ideal, bg_over, line, points).properties(height=220).interactive().configure_axis(labelAngle=0)
 
 
 def draw_temperature_chart(df):
@@ -66,7 +66,7 @@ def draw_temperature_chart(df):
         tooltip=['Hiển thị Giờ', 'Nhiệt độ (°C)', 'Độ ẩm (%)', 'VPD (kPa)', 'Trạng thái']
     )
     
-    return alt.layer(line, points).properties(height=200).interactive().configure_axis(labelAngle=0)
+    return alt.layer(line, points).properties(height=180).interactive().configure_axis(labelAngle=0)
 
 
 def draw_humidity_chart(df):
@@ -86,4 +86,4 @@ def draw_humidity_chart(df):
         tooltip=['Hiển thị Giờ', 'Nhiệt độ (°C)', 'Độ ẩm (%)', 'VPD (kPa)', 'Trạng thái']
     )
     
-    return alt.layer(line, points).properties(height=200).interactive().configure_axis(labelAngle=0)
+    return alt.layer(line, points).properties(height=180).interactive().configure_axis(labelAngle=0)
