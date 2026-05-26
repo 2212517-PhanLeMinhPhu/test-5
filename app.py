@@ -49,7 +49,7 @@ for key, val in CHAU_HINH_MAC_DINH.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
-# Nhúng CSS
+# Nhúng CSS bảo vệ giao diện
 st.markdown("""
     <style>
     html, body, [data-testid="stAppViewContainer"] { overflow-y: auto !important; scroll-behavior: smooth; }
@@ -370,92 +370,4 @@ with tab_past:
             df_up = load_and_parse_uploaded_file(u_file, u_file.name)
             st.success(f"⚡ Đã đọc file '{u_file.name}' với {len(df_up)} dòng dữ liệu!")
             
-            with st.expander("🔍 XEM FILE THÔ", expanded=False):
-                st.dataframe(df_up.head(3), use_container_width=True)
-                
-            cols = list(df_up.columns)
-            detected_time = cols[0]
-            detected_temp = cols[1] if len(cols) > 1 else cols[0]
-            detected_humi = cols[2] if len(cols) > 2 else cols[0]
-            
-            for c in cols:
-                cl = str(c).lower().strip()
-                if any(k in cl for k in ['time', 'thời gian', 'giờ', 'gio', 'date', 'timestamp', 'created_at', 'datetime', 'ngày']): detected_time = c
-                elif any(k in cl for k in ['temp', 'temperature', 'nhiệt độ', 't°', 't1', 'nhiet_do', 'field1']): detected_temp = c
-                elif any(k in cl for k in ['hum', 'humidity', 'độ ẩm', 'rh', 'h1', 'do_am', 'field2', 'field3']): detected_humi = c
-
-            st.markdown("<div class='upload-header'>🛠️ 3. ĐỒNG BỘ KHỚP CỘT DỮ LIỆU</div>", unsafe_allow_html=True)
-            cc1, cc2, cc3 = st.columns(3)
-            with cc1: c_time = st.selectbox("Thời gian:", cols, index=cols.index(detected_time) if detected_time in cols else 0)
-            with cc2: c_temp = st.selectbox("Nhiệt độ:", cols, index=cols.index(detected_temp) if detected_temp in cols else 0)
-            with cc3: c_humi = st.selectbox("Độ ẩm:", cols, index=cols.index(detected_humi) if detected_humi in cols else 0)
-
-            df_rc = process_data_columns(df_up, c_time, c_temp, c_humi)
-            
-            if df_rc.empty:
-                st.error("⚠️ Không tìm thấy hoặc lỗi định dạng dữ liệu Nhiệt độ/Độ ẩm!")
-                st.stop()
-
-            av_dates = df_rc["only_date"].unique()
-            
-            if "Tự chọn ngày cụ thể" in t_filter:
-                s_date = st.date_input("👇 Chọn ngày:", value=av_dates[-1] if len(av_dates)>0 else datetime.now().date())
-                df_rc = df_rc[df_rc["only_date"] == s_date]
-            elif "29 ngày" in t_filter:
-                st_d = st.date_input("👇 Ngày bắt đầu:", value=av_dates[0] if len(av_dates)>0 else datetime.now().date())
-                df_rc = df_rc[(df_rc["only_date"] >= st_d) & (df_rc["only_date"] <= st_d + timedelta(days=29))]
-            elif "6 ngày" in t_filter:
-                st_d = st.date_input("👇 Ngày bắt đầu:", value=av_dates[0] if len(av_dates)>0 else datetime.now().date())
-                df_rc = df_rc[(df_rc["only_date"] >= st_d) & (df_rc["only_date"] <= st_d + timedelta(days=6))]
-            elif "Xem toàn bộ dữ liệu gốc" in t_filter:
-                pass
-            else:
-                m_time = df_rc["datetime_internal"].max()
-                if "1 Ngày gần nhất" in t_filter: 
-                    df_rc = df_rc[df_rc["datetime_internal"] >= (m_time - timedelta(days=1))]
-                elif "1 Tuần gần nhất" in t_filter: 
-                    df_rc = df_rc[df_rc["datetime_internal"] >= (m_time - timedelta(days=7))]
-                elif "1 Tháng gần nhất" in t_filter: 
-                    df_rc = df_rc[df_rc["datetime_internal"] >= (m_time - timedelta(days=30))]
-
-            df_f_blk = df_rc.copy()
-
-            if len(df_rc) > 0:
-                u_days_f = df_rc["only_date"].nunique()
-                df_rs = df_rc.drop_duplicates(subset=["datetime_internal"]).copy()
-                df_rs = df_rs[["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw"]].set_index("datetime_internal")
-                
-                is_long_period = any(k in t_filter for k in ["1 Tuần gần nhất", "1 Tháng gần nhất", "ngày"])
-                
-                if is_long_period: 
-                    df_rs = df_rs.resample("1D").mean().dropna()
-                elif "Xem toàn bộ dữ liệu gốc" in t_filter: 
-                    df_rs = df_rs.resample("1h" if u_days_f > 2 else "10min").mean().dropna()
-                elif "1 Ngày gần nhất" in t_filter: 
-                    df_rs = df_rs.resample("10min").mean().dropna()
-                
-                df_rs["datetime_internal"] = df_rs.index
-                fmt = "%d/%m %H:%M" if (is_long_period or ("Xem toàn bộ dữ liệu gốc" in t_filter and u_days_f > 2)) else "%H:%M"
-                df_rs["Hiển thị Giờ"] = df_rs["datetime_internal"].dt.strftime(fmt)
-                df_rs.reset_index(drop=True, inplace=True)
-            else:
-                u_days_f = 0
-                df_rs = pd.DataFrame(columns=["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw", "Hiển thị Giờ"])
-
-            if not df_rs.empty:
-                df_p = pd.DataFrame({"datetime_internal": df_rs["datetime_internal"], "Nhiệt độ (°C)": df_rs["Nhiệt độ (°C)"].round(2), "Độ ẩm (%)": df_rs["Độ ẩm (%)"].round(2), "Hiển thị Giờ": df_rs["Hiển thị Giờ"], "VPD (kPa)": df_rs["VPD_raw"].round(2), "Ngày": "Dữ liệu File"})
-                conditions = [df_p["VPD (kPa)"] < f_min, df_p["VPD (kPa)"] <= f_max]
-                choices = ["⚠️ Quá ẩm", "✅ Lý tưởng"]
-                df_p["Trạng thái"] = np.select(conditions, choices, default="🚨 Quá khô")
-            else:
-                st.warning("⚠️ Không tìm thấy dữ liệu phù hợp với bộ lọc thời gian!")
-                st.stop()
-            
-            st.markdown("<div style='margin-top:15px;margin-bottom:5px;font-weight:bold;color:#1A5276;'>📊 TỔNG QUAN CHU KỲ GỘP</div>", unsafe_allow_html=True)
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.markdown(f"<div class='metric-card-upload'><span>📈 VPD TB CHU KỲ</span><br><b style='font-size:18px;color:#2E7D32;'>{df_p['VPD (kPa)'].mean():.2f} kPa</b></div>", unsafe_allow_html=True)
-            mc2.markdown(f"<div class='metric-card-upload'><span>🌡️ NHIỆT ĐỘ TB</span><br><b style='font-size:18px;color:#FF4B4B;'>{df_p['Nhiệt độ (°C)'].mean():.1f} °C</b></div>", unsafe_allow_html=True)
-            mc3.markdown(f"<div class='metric-card-upload'><span>💧 ĐỘ ẨM TB</span><br><b style='font-size:18px;color:#0068C9;'>{df_p['Độ ẩm (%)'].mean():.1f} %</b></div>", unsafe_allow_html=True)
-            mc4.markdown(f"<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU</span><br><b style='font-size:18px;color:#5D6D7E;'>{len(df_p)} điểm</b></div>", unsafe_allow_html=True)
-            mc3.markdown(f"<div class='metric-card-upload'><span>💧 ĐỘ ẨM TB</span><br><b style='font-size:18px;color:#0068C9;'>{df_p['Độ ẩm (%)'].mean():.1f} %</b></div>", unsafe_allow_html=True)
-            mc4.markdown(f"<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU</span><br>
+            with st.expander("🔍 XEM FILE
