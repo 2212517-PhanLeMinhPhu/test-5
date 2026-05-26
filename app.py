@@ -37,7 +37,7 @@ DANH_SACH_CAY = {
 plant_list_keys = list(DANH_SACH_CAY.keys())
 
 # Khởi tạo Session State vững chắc
-CHAU_HINH_MAC_DINH = {
+CAU_HINH_MAC_DINH = {
     "temp": 0.0, "rh": 0.0, "countdown": 15,
     "is_running": False, "is_completed": False, "history": [],
     "stt_counter": 0, "plant_idx": 0, "vpd_range_val": (0.6, 1.1),
@@ -45,7 +45,7 @@ CHAU_HINH_MAC_DINH = {
     "file_vpd_range_val": (0.6, 1.1), "discord_webhook_input": ""
 }
 
-for key, val in CHAU_HINH_MAC_DINH.items():
+for key, val in CAU_HINH_MAC_DINH.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
@@ -88,17 +88,19 @@ def get_weather_chart(df):
     plot_df = df.copy()
     plot_df["Thời gian"] = pd.to_datetime(plot_df["datetime_internal"])
     base = alt.Chart(plot_df).encode(x=alt.X("Thời gian:T", title="Thời gian", axis=alt.Axis(format="%H:%M", grid=False, tickCount=10)))
-    temp_line = base.mark_line(color="#FF4B4B", strokeWidth=2).encode(y=alt.Y("Nhiệt độ (°C):Q", title="Nhiệt độ (°C)", scale=alt.Scale(zero=False)))
-    humi_line = base.mark_line(color="#0068C9", strokeWidth=2).encode(y=alt.Y("Độ ẩm (%):Q", title="Độ ẩm (%)", scale=alt.Scale(zero=False)))
+    temp_line = base.mark_line(color="#FF4B4B", strokeWidth=2).encode(y=alt.Y("Nhiệt độ (°C)", title="Nhiệt độ (°C)", scale=alt.Scale(zero=False)))
+    humi_line = base.mark_line(color="#0068C9", strokeWidth=2).encode(y=alt.Y("Độ ẩm (%)", title="Độ ẩm (%)", scale=alt.Scale(zero=False)))
     
     return alt.layer(temp_line, humi_line).resolve_scale(y="independent").properties(height=350).interactive()
 
 # --- HÀM BỔ TRỢ ---
 def style_status_rows(row):
     styles = [""] * len(row)
-    if "Trạng thái" in row.index:
-        idx = row.index.get_loc("Trạng thái")
-        status = str(row["Trạng thái"])
+    # Tìm kiếm linh hoạt chữ "Trạng thái" trong index cột
+    status_col = [c for c in row.index if "Trạng thái" in str(c)]
+    if status_col:
+        idx = row.index.get_loc(status_col[0])
+        status = str(row[status_col[0]])
         if "Lý tưởng" in status: styles[idx] = "background-color: #E8F5E9; color: #1B5E20; font-weight: bold;"
         elif "Quá khô" in status: styles[idx] = "background-color: #FFEBEE; color: #B71C1C; font-weight: bold;"
         elif "Quá ẩm" in status: styles[idx] = "background-color: #E3F2FD; color: #0D47A1; font-weight: bold;"
@@ -175,6 +177,7 @@ def load_and_parse_uploaded_file(file_obj, file_name):
     if file_name.endswith('.json'):
         j_data = json.load(file_obj)
         
+        # Đọc sâu vào cấu trúc mảng IoT lồng nhau
         for nested_key in ['feeds', 'data', 'records', 'list', 'values']:
             if isinstance(j_data, dict) and nested_key in j_data and isinstance(j_data[nested_key], list):
                 j_data = j_data[nested_key]
@@ -213,8 +216,10 @@ def process_data_columns(df_raw, c_time, c_temp, c_humi):
         
     df["datetime_internal"] = df["datetime_internal"].ffill().fillna(datetime.now())
     
+    # Sửa lỗi phần cứng gửi giá trị nhân 10
     df.loc[df["Nhiệt độ (°C)"] >= 55.0, "Nhiệt độ (°C)"] = df["Nhiệt độ (°C)"] / 10.0
     
+    # Sửa lỗi chuẩn hóa tỷ lệ độ ẩm từ hệ thập phân
     max_humi_val = df["Độ ẩm (%)"].dropna().max()
     if max_humi_val is not None and 0.0 < max_humi_val <= 1.05: 
         df["Độ ẩm (%)"] = df["Độ ẩm (%)"] * 100.0
@@ -450,7 +455,14 @@ with tab_past:
                 df_rs = pd.DataFrame(columns=["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw", "Hiển thị Giờ"])
 
             if not df_rs.empty:
-                df_p = pd.DataFrame({"datetime_internal": df_rs["datetime_internal"], "Nhiệt độ (°C)": df_rs["Nhiệt độ (°C)"].round(2), "Độ ẩm (%)": df_rs["Độ ẩm (%)"].round(2), "Hiển thị Giờ": df_rs["Hiển thị Giờ"], "VPD (kPa)": df_rs["VPD_raw"].round(2), "Ngày": "Dữ liệu File"})
+                df_p = pd.DataFrame({
+                    "datetime_internal": df_rs["datetime_internal"], 
+                    "Nhiệt độ (°C)": df_rs["Nhiệt độ (°C)"].round(2), 
+                    "Độ ẩm (%)": df_rs["Độ ẩm (%)"].round(2), 
+                    "Hiển thị Giờ": df_rs["Hiển thị Giờ"], 
+                    "VPD (kPa)": df_rs["VPD_raw"].round(2), 
+                    "Ngày": "Dữ liệu File"
+                })
                 conditions = [df_p["VPD (kPa)"] < f_min, df_p["VPD (kPa)"] <= f_max]
                 choices = ["⚠️ Quá ẩm", "✅ Lý tưởng"]
                 df_p["Trạng thái"] = np.select(conditions, choices, default="🚨 Quá khô")
@@ -458,7 +470,7 @@ with tab_past:
                 st.warning("⚠️ Không tìm thấy dữ liệu phù hợp với bộ lọc thời gian!")
                 st.stop()
             
-            st.markdown("<div style='margin-top:15px;margin-bottom:5px;font-weight:bold;color:#1A5276;'>📊 TỔNG QUAN CHU KỲ GỘP</div>", unsafe_allow_html=True)
+            st.markdown("<div class='upload-header'>📊 TỔNG QUAN CHU KỲ GỘP</div>", unsafe_allow_html=True)
             mc1, mc2, mc3, mc4 = st.columns(4)
             
             mc1.markdown(f"<div class='metric-card-upload'><span>📈 VPD TB CHU KỲ</span><br><b style='font-size:18px;color:#2E7D32;'>{df_p['VPD (kPa)'].mean():.2f} kPa</b></div>", unsafe_allow_html=True)
@@ -495,22 +507,18 @@ with tab_past:
             st.markdown("---")
             st.markdown("##### 📋 NHẬT KÝ THEO DÕI ĐIỂM GỘP CHU KỲ")
             
-            df_tc = df_p[["Hiển thị Giờ", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]].copy()
-            for c in ["Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)"]: 
-                df_tc[c] = df_tc[c].apply(lambda x: f"{float(x):.2f}")
-            
-            df_tc = df_tc.rename(columns={
-                "Hiển thị Giờ": "Thời gian (Chu kỳ)",
-                "Nhiệt độ (°C)": "Nhiệt độ trung bình (°C)",
-                "Độ ẩm (%)": "Độ ẩm trung bình (%)",
-                "VPD (kPa)": "VPD trung bình (kPa)",
-                "Trạng thái": "Trạng thái"
+            # Khắc phục lỗi hiển thị 0.00 bằng cách map đúng tên cột sau khi gộp chu kỳ
+            df_tc = pd.DataFrame({
+                "Thời gian (Chu kỳ)": df_p["Hiển thị Giờ"],
+                "Nhiệt độ trung bình (°C)": df_p["Nhiệt độ (°C)"].apply(lambda x: f"{float(x):.2f}"),
+                "Độ ẩm trung bình (%)": df_p["Độ ẩm (%)"].apply(lambda x: f"{float(x):.2f}"),
+                "VPD trung bình (kPa)": df_p["VPD (kPa)"].apply(lambda x: f"{float(x):.2f}"),
+                "Trạng thái": df_p["Trạng thái"]
             })
             
             st.dataframe(df_tc.style.apply(style_status_rows, axis=1), use_container_width=True, hide_index=True, height=350)
             
-            df_download = df_tc.copy()
-            csv_data = df_download.to_csv(index=False).encode('utf-8')
+            csv_data = df_tc.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Xuất báo cáo chu kỳ (.csv)", data=csv_data, file_name="vpd_report.csv", mime="text/csv", use_container_width=True)
 
             st.markdown("---")
