@@ -17,7 +17,6 @@ try:
         predict_vpd_trend_v3, 
         calculate_plant_stress_hours
     )
-    # Thay thế hàm import biểu đồ cũ bằng hàm gộp mới
     from charts import draw_vpd_chart, draw_weather_combined_chart
 except ModuleNotFoundError as e:
     st.error(f"❌ Không tìm thấy module bổ trợ: {e.name}")
@@ -32,7 +31,7 @@ DANH_SACH_CAY = {
     "🌹 Hoa hồng nhà kính (Đà Lạt)": (0.8, 1.3),
     "🌼 Hoa cúc / Hoa đồng tiền": (0.7, 1.2),
     "🍅 Cà chua bi / 🫑 Ớt chuông Palermo": (0.8, 1.4),
-    "🥦 Súp lơ xanh / Bắp cải baby": (0.5, 1.0),
+    "🥦 Súp lơ xanh / Bắp cabbage baby": (0.5, 1.0),
     "🥬 Xà lách Thủy canh (Lô lô, Romaine)": (0.4, 0.9),
     "🌱 Cây giống trong vườn ươm": (0.3, 0.7),
     "🛠️ Tùy chỉnh thủ công ngưỡng riêng": (0.8, 1.2)
@@ -224,7 +223,6 @@ def render_realtime_analytics_panel():
         st.markdown("##### 🎯 Chỉ số VPD (kPa)")
         st.altair_chart(draw_vpd_chart(df_f, v_min, v_max), use_container_width=True)
         
-        # SỬA ĐỔI TẠI ĐÂY: Loại bỏ sc1, sc2 chia đôi cột, chuyển sang hiển thị biểu đồ gộp full-width
         st.markdown("##### 🌡️ Tương quan Thời tiết: Nhiệt độ & Độ ẩm")
         st.altair_chart(draw_weather_combined_chart(df_f), use_container_width=True)
         
@@ -268,27 +266,22 @@ with tab_past:
             elif u_file.name.endswith('.csv'): df_up = pd.read_csv(u_file)
             else: df_up = pd.read_excel(u_file)
                 
+            # 🔥 TỐI ƯU SỬA ĐỔI: Thuật toán dò tìm từ khóa thông minh, không gán bừa vị trí index
             c_t, c_h, c_time = None, None, None
             for c in df_up.columns:
                 cl = str(c).lower().strip()
-                if 'tempkk' in cl: c_t = c
-                if 'humikk' in cl: c_h = c
-                if any(k in cl for k in ['thời gian', 'time', 'gio', 'date', 'timestamp', 'created_at']): c_time = c
+                if any(k in cl for k in ['tempkk', 'temperature', 'nhiệt độ', 'nhiet do', 'temp', 't°']): 
+                    c_t = c
+                if any(k in cl for k in ['humikk', 'humidity', 'độ ẩm', 'do am', 'hum', 'rh']): 
+                    c_h = c
+                if any(k in cl for k in ['thời gian', 'time', 'giờ', 'gio', 'date', 'timestamp', 'created_at']): 
+                    c_time = c
 
-            if not c_t:
-                for c in df_up.columns:
-                    cl = str(c).lower().strip()
-                    if any(k in cl for k in ['temp', 'nhiet', 't°', 'temperature']): c_t = c
-            if not c_h:
-                for c in df_up.columns:
-                    cl = str(c).lower().strip()
-                    if any(k in cl for k in ['rh', 'hum', 'do am', 'humidity']): c_h = c
+            # Bổ khuyết thông minh theo cấu trúc chuẩn thiết bị IoT (0: Trục Giờ | 1: Nhiệt độ | 2: Độ ẩm)
+            if not c_time and len(df_up.columns) > 0: c_time = df_up.columns[0]
+            if not c_t and len(df_up.columns) > 1: c_t = df_up.columns[1]
+            if not c_h and len(df_up.columns) > 2: c_h = df_up.columns[2]
 
-            if not c_t and len(df_up.columns) > 0: c_t = df_up.columns[0]
-            if not c_h and len(df_up.columns) > 1: c_h = df_up.columns[1]
-            if not c_time and len(df_up.columns) > 2: c_time = df_up.columns[2]
-
-            # TỐI ƯU HÓA: Vector hóa bộ dịch thời gian bằng Pandas nhanh gấp 10 lần
             time_series = df_up[c_time].astype(str).str.strip()
             
             def fix_iot_time_format(val):
@@ -381,11 +374,11 @@ with tab_past:
                 st.markdown("##### 🎯 Chỉ số VPD (kPa)")
                 st.altair_chart(draw_vpd_chart(df_p, f_min, f_max), use_container_width=True)
                 
-                # SỬA ĐỔI TẠI ĐÂY: Thay thế sfc1, sfc2 cũ thành 1 biểu đồ gộp duy nhất tràn màn hình
                 st.markdown("##### 🌡️ Tương quan Thời tiết: Nhiệt độ & Độ ẩm")
                 st.altair_chart(draw_weather_combined_chart(df_p), use_container_width=True)
             with rr:
                 st.markdown("##### 📋 NHẬT KÝ THEO DÕI ĐIỂM GỘP CHU KỲ")
+                # Đảm bảo hiển thị đúng cấu trúc định dạng cột: Giờ -> Nhiệt độ -> Độ ẩm -> VPD
                 df_tc = df_p[["Hiển thị Giờ", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]].copy()
                 for c in ["Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)"]: df_tc[c] = df_tc[c].apply(lambda x: f"{float(x):.2f}")
                 st.dataframe(df_tc.style.apply(style_status_rows, axis=1), use_container_width=True, hide_index=True, height=290)
