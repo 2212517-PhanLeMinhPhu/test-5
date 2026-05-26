@@ -312,7 +312,8 @@ with tab_past:
                 st.error("⚠️ Lỗi khớp kiểu số dữ liệu!")
                 st.stop()
             
-            df_rc["datetime_internal"] = df_rc["datetime_internal"].fillna(method='ffill').fillna(datetime.now())
+            # 🔥 ĐÃ SỬA: Thay thế fillna(method='ffill') bằng hàm độc lập .ffill() mới của Pandas 2.x
+            df_rc["datetime_internal"] = df_rc["datetime_internal"].ffill().fillna(datetime.now())
             df_rc["Nhiệt độ (°C)"] = df_rc["Nhiệt độ (°C)"].apply(lambda x: x / 10.0 if pd.notna(x) and x >= 55.0 else x)
             if df_rc["Độ ẩm (%)"].dropna().max() <= 1.05: df_rc["Độ ẩm (%)"] = df_rc["Độ ẩm (%)"] * 100.0
             
@@ -343,7 +344,6 @@ with tab_past:
 
             if len(df_rc) > 0:
                 u_days_f = df_rc["only_date"].nunique()
-                # Bảo vệ chống trùng lặp index trước khi resample
                 df_rs = df_rc.drop_duplicates(subset=["datetime_internal"]).copy()
                 df_rs = df_rs[["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw"]].set_index("datetime_internal")
                 
