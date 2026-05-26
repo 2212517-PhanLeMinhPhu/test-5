@@ -462,7 +462,7 @@ with tab_past:
             mc1, mc2, mc3, mc4 = st.columns(4)
             
             mc1.markdown(f"""<div class='metric-card-upload'><span>📈 VPD TB CHU KỲ</span><br><b style='font-size:18px;color:#2E7D32;'>{df_p['VPD (kPa)'].mean():.2f} kPa</b></div>""", unsafe_allow_html=True)
-            mc2.markdown(f Atlantic=f"""<div class='metric-card-upload'><span>🌡️ NHIỆT ĐỘ TB</span><br><b style='font-size:18px;color:#FF4B4B;'>{df_p['Nhiệt độ (°C)'].mean():.1f} °C</b></div>""", unsafe_allow_html=True)
+            mc2.markdown(f"""<div class='metric-card-upload'><span>🌡️ NHIỆT ĐỘ TB</span><br><b style='font-size:18px;color:#FF4B4B;'>{df_p['Nhiệt độ (°C)'].mean():.1f} °C</b></div>""", unsafe_allow_html=True)
             mc3.markdown(f"""<div class='metric-card-upload'><span>💧 ĐỘ ẨM TB</span><br><b style='font-size:18px;color:#0068C9;'>{df_p['Độ ẩm (%)'].mean():.1f} %</b></div>""", unsafe_allow_html=True)
             mc4.markdown(f"""<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU</span><br><b style='font-size:18px;color:#5D6D7E;'>{len(df_p)} điểm</b></div>""", unsafe_allow_html=True)
 
@@ -522,19 +522,17 @@ with tab_past:
                 choices = ["""🌅 Sáng (05h - 10h)""", """☀️ Trưa (10h - 15h)""", """🌇 Chiều (15h - 19h)""", """🌌 Tối (19h - 23h)"""]
                 df_f_blk["Buổi"] = np.select(conditions, choices, default="""🌙 Khuya (23h - 05h)""")
                 b_sum = df_f_blk.groupby("Buổi").agg({"Nhiệt độ (°C)": "mean", "Độ ẩm (%)": "mean", "VPD_raw": "mean"}).reindex(choices + ["""🌙 Khuya (23h - 05h)"""]).dropna(how="all").reset_index()
-                b_sum.columns = [... if len(b_sum.columns) == 0 else """Khoảng thời gian""", """Nhiệt độ TB (°C)""", """Độ ẩm TB (%)""", """VPD TB (kPa)"""]
                 b_sum.columns = ["""Khoảng thời gian""", """Nhiệt độ TB (°C)""", """Độ ẩm TB (%)""", """VPD TB (kPa)"""]
                 for c in ["""Nhiệt độ TB (°C)""", """Độ ẩm TB (%)""", """VPD TB (kPa)"""]: 
                     b_sum[c] = b_sum[c].round(2)
                 eval_conds = [b_sum["VPD TB (kPa)"] < f_min, b_sum["VPD TB (kPa)"] <= f_max]
-                b_sum["Đánh giá"] = np.select(eval_conds, [... if len(eval_conds) == 0 else """🟦 Quá ẩm""", """🟩 Lý tưởng"""], default="""🚨 Quá khô""")
                 b_sum["Đánh giá"] = np.select(eval_conds, ["""🟦 Quá ẩm""", """🟩 Lý tưởng"""], default="""🚨 Quá khô""")
                 st.dataframe(b_sum, use_container_width=True, hide_index=True)
                 
         except Exception as file_err:
             st.error(f"""❌ Không thể xử lý cấu trúc file này: {str(file_err)}""")
 
-# === XỬ LÝ VÒNG LẶP RERUN ĐẶT Ở CUỐI CÙNG ===
+# --- XỬ LÝ VÒNG LẶP RERUN ĐẶT Ở CUỐI CÙNG ---
 if st.session_state.is_running:
     time.sleep(1)
     st.session_state.countdown -= 1
