@@ -36,7 +36,7 @@ DANH_SACH_CAY = {
 }
 plant_list_keys = list(DANH_SACH_CAY.keys())
 
-# Khởi tạo Session State vững chắc
+# Khởi tạo Session State
 CAU_HINH_MAC_DINH = {
     "temp": 0.0, "rh": 0.0, "countdown": 15,
     "is_running": False, "is_completed": False, "history": [],
@@ -171,12 +171,11 @@ def trigger_new_data(v_min, v_max):
     except Exception as e:
         print(f"Error triggering data: {e}")
 
-# --- ENGINE PARSE FILE JSON CHỈ LỌC THỜI GIAN, TEMP_KK, HUMI_KK ---
+# --- ENGINE PARSE FILE JSON - TỰ ĐỘNG KHỬ SỐ LỚN BẤT THƯỜNG TRÊN TRƯỜNG NHIỆT ĐỘ ---
 def load_and_parse_uploaded_file(file_obj, file_name):
     if file_name.endswith('.json'):
         j_data = json.load(file_obj)
         
-        # Đọc sâu vào cấu trúc mảng IoT lồng nhau nếu có
         for nested_key in ['feeds', 'data', 'records', 'list', 'values']:
             if isinstance(j_data, dict) and nested_key in j_data and isinstance(j_data[nested_key], list):
                 j_data = j_data[nested_key]
@@ -188,26 +187,41 @@ def load_and_parse_uploaded_file(file_obj, file_name):
                 if not isinstance(item, dict):
                     continue
                 
-                # BỎ QUA các bản ghi không chứa tempKK hoặc humiKK (như trạm đất/nước)
+                # Bỏ qua các dòng không có trạm đo không khí
                 if "tempKK" not in item or "humiKK" not in item:
                     continue
                 
-                # Sửa lỗi định dạng chuỗi Thời gian (Ví dụ từ "2025-02-18 16-43-37" -> "2025-02-18 16:43:37")
                 raw_time = item.get("Thời gian", "")
                 if "-" in str(raw_time) and len(str(raw_time)) > 13 and str(raw_time)[13] == "-":
                     parts = str(raw_time).split(" ")
                     if len(parts) == 2:
                         raw_time = f"{parts[0]} {parts[1].replace('-', ':')}"
                 
-                # CHỈ LẤY ĐÚNG 3 TRƯỜNG THEO YÊU CẦU
+                try:
+                    temp_val = float(item.get("tempKK", 0))
+                    humi_val = float(item.get("humiKK", 0))
+                    
+                    # THUẬT TOÁN PHÁT HIỆN ĐẢO CHỖ DỰA TRÊN NGƯỠNG SINH HỌC TRỒNG TRỌT:
+                    # Nhiệt độ trồng trọt thực tế nhà kính rất hiếm khi vượt quá 45°C. 
+                    # Nếu trường tempKK ghi nhận số quá lớn (Ví dụ: 73.5, 85.2,...) và đồng thời lớn hơn humiKK,
+                    # Chắc chắn đó là giá trị Độ ẩm (%) bị đẩy nhầm sang cột Nhiệt độ.
+                    if temp_val > 45.0 and temp_val > humi_val:
+                        correct_temp = humi_val
+                        correct_humi = temp_val
+                    else:
+                        correct_temp = temp_val
+                        correct_humi = humi_val
+                except (ValueError, TypeError):
+                    correct_temp = item.get("tempKK")
+                    correct_humi = item.get("humiKK")
+                
                 parsed_list.append({
                     "Thời gian": raw_time,
-                    "tempKK": item.get("tempKK"),
-                    "humiKK": item.get("humiKK")
+                    "tempKK": correct_temp,
+                    "humiKK": correct_humi
                 })
             return pd.DataFrame(parsed_list)
             
-        # Trường hợp Dict thô không lồng, lọc cột luôn
         df_dict = pd.DataFrame(j_data)
         keep_cols = [c for c in ["Thời gian", "tempKK", "humiKK"] if c in df_dict.columns]
         return df_dict[keep_cols]
@@ -233,7 +247,6 @@ def process_data_columns(df_raw, c_time, c_temp, c_humi):
         
     df["datetime_internal"] = df["datetime_internal"].ffill().fillna(datetime.now())
     
-    # Chuẩn hóa tỷ lệ độ ẩm từ hệ thập phân nếu có lỗi phần cứng
     max_humi_val = df["Độ ẩm (%)"].dropna().max()
     if max_humi_val is not None and 0.0 < max_humi_val <= 1.05: 
         df["Độ ẩm (%)"] = df["Độ ẩm (%)"] * 100.0
@@ -394,14 +407,12 @@ with tab_past:
     if u_file:
         try:
             df_up = load_and_parse_uploaded_file(u_file, u_file.name)
-            st.success(f"⚡ Đã đọc file '{u_file.name}'. Hệ thống tự động lọc 3 cột: [Thời gian, tempKK, humiKK]!")
+            st.success(f"⚡ Đã đọc file '{u_file.name}'. Hệ thống tự động quét sạch các dòng có Nhiệt độ lớn bất thường (>45°C) để đảo ngược lại chuẩn xác!")
             
-            with st.expander("🔍 XEM FILE SAU KHI LỌC SẠCH DỮ LIỆU", expanded=False):
+            with st.expander("🔍 XEM FILE SAU KHI ĐÃ ĐẢO LẠI GIÁ TRỊ CHUẨN", expanded=False):
                 st.dataframe(df_up.head(5), use_container_width=True)
                 
             cols = list(df_up.columns)
-            
-            # Khóa cứng (Hardcode) cấu hình gán cột vì file đã được xử lý tối giản hóa thành công
             c_time = "Thời gian"
             c_temp = "tempKK"
             c_humi = "humiKK"
