@@ -440,7 +440,16 @@ with tab_past:
             with rr:
                 st.markdown("##### 📋 NHẬT KÝ THEO DÕI ĐIỂM GỘP CHU KỲ")
                 df_tc = df_p[["Hiển thị Giờ", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]].copy()
-                for c in ["Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)"]: df_tc[c] = df_tc[c].apply(lambda x: f"{float(x):.2f}")
+                for c in ["Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)"]: 
+                    df_tc[c] = df_tc[c].apply(lambda x: f"{float(x):.2f}")
+                
+                # CHÈN PHẦN ĐỔI TÊN TIÊU ĐỀ THÀNH GIÁ TRỊ TRUNG BÌNH (TB)
+                df_tc = df_tc.rename(columns={
+                    "Nhiệt độ (°C)": "Nhiệt độ TB (°C)",
+                    "Độ ẩm (%)": "Độ ẩm TB (%)",
+                    "VPD (kPa)": "VPD TB (kPa)"
+                })
+                
                 st.dataframe(df_tc.style.apply(style_status_rows, axis=1), use_container_width=True, hide_index=True, height=290)
                 st.download_button("📥 Xuất báo cáo chu kỳ (.csv)", data=df_p.to_csv(index=False).encode('utf-8'), file_name="vpd_report.csv", mime="text/csv", use_container_width=True)
 
