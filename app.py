@@ -163,26 +163,62 @@ def trigger_new_data(v_min, v_max):
     except Exception as e:
         print(f"Error triggering data: {e}")
 
-# --- CACHE DATA ĐỂ TỐI ƯU ---
+# --- 🛠️ ĐÃ NÂNG CẤP: ENGINE PARSE FILE JSON ĐA ĐỊNH DẠNG IOT ---
 def load_and_parse_uploaded_file(file_obj, file_name):
     if file_name.endswith('.json'):
         j_data = json.load(file_obj)
-        if isinstance(j_data, dict) and not isinstance(list(j_data.values())[0], (dict, list)): return pd.DataFrame([j_data])
+        
+        # 1. Khử lồng cấu trúc mảng kiểu ThingSpeak/Blynk (nếu nằm trong từ khóa feeds, data, records...)
+        for nested_key in ['feeds', 'data', 'records', 'list', 'values']:
+            if isinstance(j_data, dict) and nested_key in j_data and isinstance(j_data[nested_key], list):
+                j_data = j_data[nested_key]
+                break
+        
+        # 2. Xử lý danh sách các bản ghi phẳng dạng mảng chuẩn [{}, {}, {}]
+        if isinstance(j_data, list):
+            return pd.DataFrame(j_data)
+            
+        # 3. Xử lý dạng Firebase lồng Dict {"-N123": {"temp": 25, "humidity": 60}}
+        if isinstance(j_data, dict):
+            first_val = next(iter(j_data.values()), None)
+            if isinstance(first_val, dict):
+                # Ép trục ngang về dọc ngay lập tức để tránh lỗi mất cột dữ liệu
+                return pd.DataFrame.from_dict(j_data, orient='index')
+            if isinstance(first_val, list):
+                return pd.DataFrame(j_data)
+            return pd.DataFrame([j_data])
+            
         return pd.DataFrame(j_data)
-    elif file_name.endswith('.csv'): return pd.read_csv(file_obj)
+    elif file_name.endswith('.csv'): 
+        return pd.read_csv(file_obj)
     return pd.read_excel(file_obj)
 
 @st.cache_data(show_spinner="Đang đồng bộ và tính toán dữ liệu (Cache)...")
 def process_data_columns(df_raw, c_time, c_temp, c_humi):
     df = pd.DataFrame()
     df["datetime_internal"] = pd.to_datetime(df_raw[c_time].astype(str).str.strip(), errors='coerce', utc=True).dt.tz_localize(None)
-    df["Nhiệt độ (°C)"] = pd.to_numeric(df_raw[c_temp], errors='coerce')
-    df["Độ ẩm (%)"] = pd.to_numeric(df_raw[c_humi], errors='coerce')
     
-    if df["Nhiệt độ (°C)"].isna().all() or df["Độ ẩm (%)"].isna().all(): return pd.DataFrame() 
+    # Hàm làm sạch chuỗi số đề phòng chuỗi chứa % hoặc kí tự nhiệt độ lạ
+    def clean_to_numeric(series):
+        clean_s = series.astype(str).str.replace('%', '', regex=False).str.replace('°C', '', regex=False).str.strip()
+        return pd.to_numeric(clean_s, errors='coerce')
+        
+    df["Nhiệt độ (°C)"] = clean_to_numeric(df_raw[c_temp])
+    df["Độ ẩm (%)"] = clean_to_numeric(df_raw[c_humi])
+    
+    if df["Nhiệt độ (°C)"].isna().all() and df["Độ ẩm (%)"].isna().all(): 
+        return pd.DataFrame() 
+        
     df["datetime_internal"] = df["datetime_internal"].ffill().fillna(datetime.now())
+    
+    # Tự động chia 10 nếu thiết bị lưu nhiệt độ dạng nhân (ví dụ 276 thay vì 27.6)
     df.loc[df["Nhiệt độ (°C)"] >= 55.0, "Nhiệt độ (°C)"] = df["Nhiệt độ (°C)"] / 10.0
-    if df["Độ ẩm (%)"].dropna().max() <= 1.05: df["Độ ẩm (%)"] = df["Độ ẩm (%)"] * 100.0
+    
+    # Chuyển đổi định dạng nếu độ ẩm ghi nhận kiểu số thập phân (0.65 -> 65%)
+    max_humi_val = df["Độ ẩm (%)"].dropna().max()
+    if max_humi_val is not None and 0.0 < max_humi_val <= 1.05: 
+        df["Độ ẩm (%)"] = df["Độ ẩm (%)"] * 100.0
+        
     df = df.dropna(subset=["Nhiệt độ (°C)", "Độ ẩm (%)"]).sort_values("datetime_internal")
     
     if not df.empty:
@@ -339,7 +375,7 @@ with tab_past:
     if u_file:
         try:
             df_up = load_and_parse_uploaded_file(u_file, u_file.name)
-            st.success(f"⚡ Đã đọc file '{u_file.name}' với {len(df_up)} dòng!")
+            st.success(f"⚡ Đã đọc file '{u_file.name}' với {len(df_up)} dòng dữ liệu!")
             
             with st.expander("🔍 XEM FILE THÔ", expanded=False):
                 st.dataframe(df_up.head(3), use_container_width=True)
@@ -349,11 +385,12 @@ with tab_past:
             detected_temp = cols[1] if len(cols) > 1 else cols[0]
             detected_humi = cols[2] if len(cols) > 2 else cols[0]
             
+            # Mở rộng từ khóa quét khớp tên cột thông minh hơn
             for c in cols:
                 cl = str(c).lower().strip()
-                if any(k in cl for k in ['time', 'thời gian', 'giờ', 'gio', 'date', 'timestamp', 'created_at']): detected_time = c
-                elif any(k in cl for k in ['temp', 'temperature', 'nhiệt độ', 't°', 't1']): detected_temp = c
-                elif any(k in cl for k in ['hum', 'humidity', 'độ ẩm', 'rh', 'h1']): detected_humi = c
+                if any(k in cl for k in ['time', 'thời gian', 'giờ', 'gio', 'date', 'timestamp', 'created_at', 'datetime', 'ngày']): detected_time = c
+                elif any(k in cl for k in ['temp', 'temperature', 'nhiệt độ', 't°', 't1', 'nhiet_do', 'field1']): detected_temp = c
+                elif any(k in cl for k in ['hum', 'humidity', 'độ ẩm', 'rh', 'h1', 'do_am', 'field2', 'field3']): detected_humi = c
 
             st.markdown("<div class='upload-header'>🛠️ 3. ĐỒNG BỘ KHỚP CỘT DỮ LIỆU</div>", unsafe_allow_html=True)
             cc1, cc2, cc3 = st.columns(3)
@@ -364,7 +401,7 @@ with tab_past:
             df_rc = process_data_columns(df_up, c_time, c_temp, c_humi)
             
             if df_rc.empty:
-                st.error("⚠️ Lỗi khớp kiểu số dữ liệu!")
+                st.error("⚠️ Không tìm thấy hoặc lỗi định dạng dữ liệu Nhiệt độ/Độ ẩm!")
                 st.stop()
 
             av_dates = df_rc["only_date"].unique()
@@ -376,109 +413,3 @@ with tab_past:
                 st_d = st.date_input("👇 Ngày bắt đầu:", value=av_dates[0] if len(av_dates)>0 else datetime.now().date())
                 df_rc = df_rc[(df_rc["only_date"] >= st_d) & (df_rc["only_date"] <= st_d + timedelta(days=29))]
             elif "6 ngày" in t_filter:
-                st_d = st.date_input("👇 Ngày bắt đầu:", value=av_dates[0] if len(av_dates)>0 else datetime.now().date())
-                df_rc = df_rc[(df_rc["only_date"] >= st_d) & (df_rc["only_date"] <= st_d + timedelta(days=6))]
-            elif "Xem toàn bộ dữ liệu gốc" in t_filter: pass
-            else:
-                m_time = df_rc["datetime_internal"].max()
-                if "1 Ngày gần nhất" in t_filter: df_rc = df_rc[df_rc["datetime_internal"] >= (m_time - timedelta(days=1))]
-                elif "1 Tuần gần nhất" in t_filter: df_rc = df_rc[df_rc["datetime_internal"] >= (m_time - timedelta(days=7))]
-                elif "1 Tháng gần nhất" in t_filter: df_rc = df_rc[df_rc["datetime_internal"] >= (m_time - timedelta(days=30))]
-
-            df_f_blk = df_rc.copy()
-
-            if len(df_rc) > 0:
-                u_days_f = df_rc["only_date"].nunique()
-                df_rs = df_rc.drop_duplicates(subset=["datetime_internal"]).copy()
-                df_rs = df_rs[["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw"]].set_index("datetime_internal")
-                
-                is_long_period = any(k in t_filter for k in ["1 Tuần gần nhất", "1 Tháng gần nhất", "ngày"])
-                
-                if is_long_period: df_rs = df_rs.resample("1D").mean().dropna()
-                elif "Xem toàn bộ dữ liệu gốc" in t_filter: df_rs = df_rs.resample("1h" if u_days_f > 2 else "10min").mean().dropna()
-                elif "1 Ngày gần nhất" in t_filter: df_rs = df_rs.resample("10min").mean().dropna()
-                
-                df_rs["datetime_internal"] = df_rs.index
-                fmt = "%d/%m %H:%M" if (is_long_period or ("Xem toàn bộ dữ liệu gốc" in t_filter and u_days_f > 2)) else "%H:%M"
-                df_rs["Hiển thị Giờ"] = df_rs["datetime_internal"].dt.strftime(fmt)
-                df_rs.reset_index(drop=True, inplace=True)
-            else:
-                u_days_f = 0
-                df_rs = pd.DataFrame(columns=["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw", "Hiển thị Giờ"])
-
-            if not df_rs.empty:
-                df_p = pd.DataFrame({"datetime_internal": df_rs["datetime_internal"], "Nhiệt độ (°C)": df_rs["Nhiệt độ (°C)"].round(2), "Độ ẩm (%)": df_rs["Độ ẩm (%)"].round(2), "Hiển thị Giờ": df_rs["Hiển thị Giờ"], "VPD (kPa)": df_rs["VPD_raw"].round(2), "Ngày": "Dữ liệu File"})
-                conditions = [df_p["VPD (kPa)"] < f_min, df_p["VPD (kPa)"] <= f_max]
-                choices = ["⚠️ Quá ẩm", "✅ Lý tưởng"]
-                df_p["Trạng thái"] = np.select(conditions, choices, default="🚨 Quá khô")
-            else:
-                st.warning("⚠️ Không tìm thấy dữ liệu phù hợp với bộ lọc thời gian!")
-                st.stop()
-            
-            st.markdown("<div style='margin-top:15px;margin-bottom:5px;font-weight:bold;color:#1A5276;'>📊 TỔNG QUAN CHU KỲ GỘP</div>", unsafe_allow_html=True)
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.markdown(f"<div class='metric-card-upload'><span>📈 VPD TB CHU KỲ</span><br><b style='font-size:18px;color:#2E7D32;'>{df_p['VPD (kPa)'].mean():.2f} kPa</b></div>", unsafe_allow_html=True)
-            mc2.markdown(f"<div class='metric-card-upload'><span>🌡️ NHIỆT ĐỘ TB</span><br><b style='font-size:18px;color:#FF4B4B;'>{df_p['Nhiệt độ (°C)'].mean():.1f} °C</b></div>", unsafe_allow_html=True)
-            mc3.markdown(f"<div class='metric-card-upload'><span>💧 ĐỘ ẨM TB</span><br><b style='font-size:18px;color:#0068C9;'>{df_p['Độ ẩm (%)'].mean():.1f} %</b></div>", unsafe_allow_html=True)
-            mc4.markdown(f"<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU</span><br><b style='font-size:18px;color:#5D6D7E;'>{len(df_p)} điểm</b></div>", unsafe_allow_html=True)
-
-            try:
-                str_res = calculate_plant_stress_hours(df_p, f_min, f_max, t_filter)
-                st.markdown("<div style='margin-top:10px;font-weight:bold;color:#B71C1C;'>⚠️ ĐÁNH GIÁ CHUYÊN SÂU ÁP LỰC CÂY TRỒNG</div>", unsafe_allow_html=True)
-                sc_l, sc_r = st.columns(2)
-                if str_res["dry_hours"] > 2.0: sc_l.error(f"🚨 **Stress Khô Nóng:** Bị đóng khí khổng suốt **{str_res['dry_hours']} giờ**.")
-                else: sc_l.success(f"✅ **Áp lực khô:** An toàn ({str_res['dry_hours']} giờ).")
-                if str_res["wet_hours"] > 4.0: sc_r.warning(f"🟦 **Stress Ẩm:** Tích tụ ẩm cao liên tục **{str_res['wet_hours']} giờ**.")
-                else: sc_r.success(f"✅ **Áp lực ẩm:** An toàn ({str_res['wet_hours']} giờ).")
-            except Exception: pass
-
-            rl, rr = st.columns([6.2, 3.8])
-            with rl:
-                st.markdown("#### 📊 BIỂU ĐỒ CHU KỲ PHÂN TẦNG")
-                st.altair_chart(get_vpd_chart(df_p, f_min, f_max), use_container_width=True)
-                st.altair_chart(get_weather_chart(df_p), use_container_width=True)
-            with rr:
-                st.markdown("##### 📋 NHẬT KÝ THEO DÕI ĐIỂM GỘP CHU KỲ")
-                df_tc = df_p[["Hiển thị Giờ", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]].copy()
-                for c in ["Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)"]: 
-                    df_tc[c] = df_tc[c].apply(lambda x: f"{float(x):.2f}")
-                
-                # CHÈN PHẦN ĐỔI TÊN TIÊU ĐỀ THÀNH GIÁ TRỊ TRUNG BÌNH (TB)
-                df_tc = df_tc.rename(columns={
-                    "Nhiệt độ (°C)": "Nhiệt độ TB (°C)",
-                    "Độ ẩm (%)": "Độ ẩm TB (%)",
-                    "VPD (kPa)": "VPD TB (kPa)"
-                })
-                
-                st.dataframe(df_tc.style.apply(style_status_rows, axis=1), use_container_width=True, hide_index=True, height=290)
-                st.download_button("📥 Xuất báo cáo chu kỳ (.csv)", data=df_p.to_csv(index=False).encode('utf-8'), file_name="vpd_report.csv", mime="text/csv", use_container_width=True)
-
-            st.markdown("---")
-            st.markdown("##### 📊 BÁO CÁO PHÂN TÍCH TỔNG HỢP THEO BUỔI CHU KỲ")
-            if not df_f_blk.empty:
-                conditions = [
-                    (df_f_blk["datetime_internal"].dt.hour >= 5) & (df_f_blk["datetime_internal"].dt.hour < 10),
-                    (df_f_blk["datetime_internal"].dt.hour >= 10) & (df_f_blk["datetime_internal"].dt.hour < 15),
-                    (df_f_blk["datetime_internal"].dt.hour >= 15) & (df_f_blk["datetime_internal"].dt.hour < 19),
-                    (df_f_blk["datetime_internal"].dt.hour >= 19) & (df_f_blk["datetime_internal"].dt.hour < 23)
-                ]
-                choices = ["🌅 Sáng (05h - 10h)", "☀️ Trưa (10h - 15h)", "🌇 Chiều (15h - 19h)", "🌌 Tối (19h - 23h)"]
-                df_f_blk["Buổi"] = np.select(conditions, choices, default="🌙 Khuya (23h - 05h)")
-                b_sum = df_f_blk.groupby("Buổi").agg({"Nhiệt độ (°C)": "mean", "Độ ẩm (%)": "mean", "VPD_raw": "mean"}).reindex(choices + ["🌙 Khuya (23h - 05h)"]).dropna(how="all").reset_index()
-                b_sum.columns = ["Khoảng thời gian", "Nhiệt độ TB (°C)", "Độ ẩm TB (%)", "VPD TB (kPa)"]
-                for c in ["Nhiệt độ TB (°C)", "Độ ẩm TB (%)", "VPD TB (kPa)"]: b_sum[c] = b_sum[c].round(2)
-                eval_conds = [b_sum["VPD TB (kPa)"] < f_min, b_sum["VPD TB (kPa)"] <= f_max]
-                b_sum["Đánh giá"] = np.select(eval_conds, ["🟦 Quá ẩm", "🟩 Lý tưởng"], default="🟥 Quá khô")
-                st.dataframe(b_sum, use_container_width=True, hide_index=True)
-                
-        except Exception as file_err:
-            st.error(f"❌ Không thể xử lý cấu trúc file này: {str(file_err)}")
-
-# === XỬ LÝ VÒNG LẶP RERUN ĐẶT Ở CUỐI CÙNG ===
-if st.session_state.is_running:
-    time.sleep(1)
-    st.session_state.countdown -= 1
-    if st.session_state.countdown < 0: 
-        v_min, v_max = st.session_state.vpd_range_val
-        trigger_new_data(v_min, v_max)
-    st.rerun()
