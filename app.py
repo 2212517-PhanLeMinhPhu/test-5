@@ -168,17 +168,14 @@ def load_and_parse_uploaded_file(file_obj, file_name):
     if file_name.endswith('.json'):
         j_data = json.load(file_obj)
         
-        # 1. Khử lồng cấu trúc mảng kiểu ThingSpeak/Blynk (nếu nằm trong từ khóa feeds, data, records...)
         for nested_key in ['feeds', 'data', 'records', 'list', 'values']:
             if isinstance(j_data, dict) and nested_key in j_data and isinstance(j_data[nested_key], list):
                 j_data = j_data[nested_key]
                 break
         
-        # 2. Xử lý danh sách các bản ghi phẳng dạng mảng chuẩn [{}, {}, {}]
         if isinstance(j_data, list):
             return pd.DataFrame(j_data)
             
-        # 3. Xử lý dạng Firebase lồng Dict {"-N123": {"temp": 25, "humidity": 60}}
         if isinstance(j_data, dict):
             first_val = next(iter(j_data.values()), None)
             if isinstance(first_val, dict):
@@ -197,7 +194,6 @@ def process_data_columns(df_raw, c_time, c_temp, c_humi):
     df = pd.DataFrame()
     df["datetime_internal"] = pd.to_datetime(df_raw[c_time].astype(str).str.strip(), errors='coerce', utc=True).dt.tz_localize(None)
     
-    # Hàm làm sạch chuỗi số đề phòng chuỗi chứa % hoặc kí tự nhiệt độ lạ
     def clean_to_numeric(series):
         clean_s = series.astype(str).str.replace('%', '', regex=False).str.replace('°C', '', regex=False).str.strip()
         return pd.to_numeric(clean_s, errors='coerce')
@@ -210,10 +206,8 @@ def process_data_columns(df_raw, c_time, c_temp, c_humi):
         
     df["datetime_internal"] = df["datetime_internal"].ffill().fillna(datetime.now())
     
-    # Tự động chia 10 nếu thiết bị lưu nhiệt độ dạng nhân (ví dụ 276 thay vì 27.6)
     df.loc[df["Nhiệt độ (°C)"] >= 55.0, "Nhiệt độ (°C)"] = df["Nhiệt độ (°C)"] / 10.0
     
-    # Chuyển đổi định dạng nếu độ ẩm ghi nhận kiểu số thập phân (0.65 -> 65%)
     max_humi_val = df["Độ ẩm (%)"].dropna().max()
     if max_humi_val is not None and 0.0 < max_humi_val <= 1.05: 
         df["Độ ẩm (%)"] = df["Độ ẩm (%)"] * 100.0
@@ -462,60 +456,4 @@ with tab_past:
             mc1.markdown(f"<div class='metric-card-upload'><span>📈 VPD TB CHU KỲ</span><br><b style='font-size:18px;color:#2E7D32;'>{df_p['VPD (kPa)'].mean():.2f} kPa</b></div>", unsafe_allow_html=True)
             mc2.markdown(f"<div class='metric-card-upload'><span>🌡️ NHIỆT ĐỘ TB</span><br><b style='font-size:18px;color:#FF4B4B;'>{df_p['Nhiệt độ (°C)'].mean():.1f} °C</b></div>", unsafe_allow_html=True)
             mc3.markdown(f"<div class='metric-card-upload'><span>💧 ĐỘ ẨM TB</span><br><b style='font-size:18px;color:#0068C9;'>{df_p['Độ ẩm (%)'].mean():.1f} %</b></div>", unsafe_allow_html=True)
-            mc4.markdown(f"<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU</span><br><b style='font-size:18px;color:#5D6D7E;'>{len(df_p)} điểm</b></div>", unsafe_allow_html=True)
-
-            try:
-                str_res = calculate_plant_stress_hours(df_p, f_min, f_max, t_filter)
-                st.markdown("<div style='margin-top:10px;font-weight:bold;color:#B71C1C;'>⚠️ ĐÁNH GIÁ CHUYÊN SÂU ÁP LỰC CÂY TRỒNG</div>", unsafe_allow_html=True)
-                sc_l, sc_r = st.columns(2)
-                if str_res["dry_hours"] > 2.0: 
-                    sc_l.error(f"🚨 **Stress Khô Nóng:** Bị đóng khí khổng suốt **{str_res['dry_hours']} giờ**.")
-                else: 
-                    sc_l.success(f"✅ **Áp lực khô:** An toàn ({str_res['dry_hours']} giờ).")
-                if str_res["wet_hours"] > 4.0: 
-                    sc_r.warning(f"🟦 **Stress Ẩm:** Tích tụ ẩm cao liên tục **{str_res['wet_hours']} giờ**.")
-                else: 
-                    sc_r.success(f"✅ **Áp lực ẩm:** An toàn ({str_res['wet_hours']} giờ).")
-            except Exception: 
-                pass
-
-            st.markdown("---")
-            st.markdown("#### 📊 BIỂU ĐỒ CHU KỲ PHÂN TẦNG")
-            
-            ch1, ch2 = st.columns(2)
-            with ch1:
-                st.markdown("##### 🎯 Chỉ số VPD (kPa)")
-                st.altair_chart(get_vpd_chart(df_p, f_min, f_max), use_container_width=True)
-            with ch2:
-                st.markdown("##### 🌡️ Tương quan Thời tiết: Nhiệt độ & Độ ẩm")
-                st.altair_chart(get_weather_chart(df_p), use_container_width=True)
-                
-            st.markdown("---")
-            st.markdown("##### 📋 NHẬT KÝ THEO DÕI ĐIỂM GỘP CHU KỲ")
-            
-            df_tc = df_p[["Hiển thị Giờ", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)", "Trạng thái"]].copy()
-            for c in ["Nhiệt độ (°C)", "Độ ẩm (%)", "VPD (kPa)"]: 
-                df_tc[c] = df_tc[c].apply(lambda x: f"{float(x):.2f}")
-            
-            df_tc = df_tc.rename(columns={
-                "Hiển thị Giờ": "Thời gian (Chu kỳ)",
-                "Nhiệt độ (°C)": "Nhiệt độ TB (°C)",
-                "Độ ẩm (%)": "Độ ẩm TB (%)",
-                "VPD (kPa)": "VPD TB (kPa)",
-                "Trạng thái": "Trạng thái"
-            })
-            
-            st.dataframe(df_tc.style.apply(style_status_rows, axis=1), use_container_width=True, hide_index=True, height=350)
-            st.download_button("📥 Xuất báo cáo chu kỳ (.csv)", data=df_p.to_csv(index=False).encode('utf-8'), file_name="vpd_report.csv", mime="text/csv", use_container_width=True)
-
-            st.markdown("---")
-            st.markdown("##### 📊 BÁO CÁO PHÂN TÍCH TỔNG HỢP THEO BUỔI CHU KỲ")
-            if not df_f_blk.empty:
-                conditions = [
-                    (df_f_blk["datetime_internal"].dt.hour >= 5) & (df_f_blk["datetime_internal"].dt.hour < 10),
-                    (df_f_blk["datetime_internal"].dt.hour >= 10) & (df_f_blk["datetime_internal"].dt.hour < 15),
-                    (df_f_blk["datetime_internal"].dt.hour >= 15) & (df_f_blk["datetime_internal"].dt.hour < 19),
-                    (df_f_blk["datetime_internal"].dt.hour >= 19) & (df_f_blk["datetime_internal"].dt.hour < 23)
-                ]
-                choices = ["🌅 Sáng (05h - 10h)", "☀️ Trưa (10h - 15h)", "🌇 Chiều (15h - 19h)", "🌌 Tối (19h - 23h)"]
-                df_f_blk
+            mc4.markdown(f"<div class='metric-card-upload'><span>📋 SỐ ĐIỂM DỮ LIỆU</span><br>
