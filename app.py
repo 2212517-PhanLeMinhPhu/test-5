@@ -339,6 +339,6 @@ def render_sidebar_controls():
         st.session_state.vpd_range_val = vpd_sc
         
     with st.container(border=True):
-        st.session_state.discord_webhook_input = st.text_input(
+        st.session_state.discord_webhook_input = st.text_input()
             "🔗 Discord Webhook URL:", 
             value=st.
