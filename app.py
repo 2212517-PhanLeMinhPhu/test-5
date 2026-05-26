@@ -171,7 +171,7 @@ def trigger_new_data(v_min, v_max):
     except Exception as e:
         print(f"Error triggering data: {e}")
 
-# --- ENGINE PARSE FILE JSON ĐA ĐỊNH DẠNG IOT ---
+# --- ENGINE PARSE FILE JSON CHỈ LỌC THỜI GIAN, TEMP_KK, HUMI_KK ---
 def load_and_parse_uploaded_file(file_obj, file_name):
     if file_name.endswith('.json'):
         j_data = json.load(file_obj)
@@ -188,6 +188,10 @@ def load_and_parse_uploaded_file(file_obj, file_name):
                 if not isinstance(item, dict):
                     continue
                 
+                # BỎ QUA các bản ghi không chứa tempKK hoặc humiKK (như trạm đất/nước)
+                if "tempKK" not in item or "humiKK" not in item:
+                    continue
+                
                 # Sửa lỗi định dạng chuỗi Thời gian (Ví dụ từ "2025-02-18 16-43-37" -> "2025-02-18 16:43:37")
                 raw_time = item.get("Thời gian", "")
                 if "-" in str(raw_time) and len(str(raw_time)) > 13 and str(raw_time)[13] == "-":
@@ -195,31 +199,22 @@ def load_and_parse_uploaded_file(file_obj, file_name):
                     if len(parts) == 2:
                         raw_time = f"{parts[0]} {parts[1].replace('-', ':')}"
                 
-                # Tự động nhận diện cấu trúc phân tầng key dựa vào loại Trạm (STT) của file
-                if "tempKK" in item:  # Trạm không khí
-                    raw_temp = item.get("tempKK")
-                    raw_humi = item.get("humiKK")
-                else:  # Trạm thực địa đo đất/nước
-                    raw_temp = item.get("Nhiệt Độ") or item.get("Nhiệt độ")
-                    raw_humi = item.get("Độ ẩm")
-                
+                # CHỈ LẤY ĐÚNG 3 TRƯỜNG THEO YÊU CẦU
                 parsed_list.append({
                     "Thời gian": raw_time,
-                    "Nhiệt độ": raw_temp,
-                    "Độ ẩm": raw_humi,
-                    "STT": item.get("STT"),
-                    "EC": item.get("EC"),
-                    "PH": item.get("PH"),
-                    "N": item.get("N"),
-                    "P": item.get("P"),
-                    "K": item.get("K")
+                    "tempKK": item.get("tempKK"),
+                    "humiKK": item.get("humiKK")
                 })
             return pd.DataFrame(parsed_list)
             
-        return pd.DataFrame(j_data)
+        # Trường hợp Dict thô không lồng, lọc cột luôn
+        df_dict = pd.DataFrame(j_data)
+        keep_cols = [c for c in ["Thời gian", "tempKK", "humiKK"] if c in df_dict.columns]
+        return df_dict[keep_cols]
+        
     elif file_name.endswith('.csv'): 
-        return pd.read_csv(file_obj)
-    return pd.read_excel(file_obj)
+        return pd.read_csv(file_obj)[["Thời gian", "tempKK", "humiKK"]]
+    return pd.read_excel(file_obj)[["Thời gian", "tempKK", "humiKK"]]
 
 @st.cache_data(show_spinner="Đang đồng bộ và tính toán dữ liệu (Cache)...")
 def process_data_columns(df_raw, c_time, c_temp, c_humi):
@@ -238,10 +233,7 @@ def process_data_columns(df_raw, c_time, c_temp, c_humi):
         
     df["datetime_internal"] = df["datetime_internal"].ffill().fillna(datetime.now())
     
-    # KHẮC PHỤC LỖI PHẦN CỨNG GỬI GIÁ TRỊ NHÂN 10 CỦA TRẠM ĐẤT TRONG FILE (Ví dụ: 331.00 -> 33.1)
-    df.loc[df["Nhiệt độ (°C)"] >= 55.0, "Nhiệt độ (°C)"] = df["Nhiệt độ (°C)"] / 10.0
-    
-    # Sửa lỗi chuẩn hóa tỷ lệ độ ẩm từ hệ thập phân
+    # Chuẩn hóa tỷ lệ độ ẩm từ hệ thập phân nếu có lỗi phần cứng
     max_humi_val = df["Độ ẩm (%)"].dropna().max()
     if max_humi_val is not None and 0.0 < max_humi_val <= 1.05: 
         df["Độ ẩm (%)"] = df["Độ ẩm (%)"] * 100.0
@@ -402,28 +394,22 @@ with tab_past:
     if u_file:
         try:
             df_up = load_and_parse_uploaded_file(u_file, u_file.name)
-            st.success(f"⚡ Đã đọc file '{u_file.name}' với {len(df_up)} dòng dữ liệu!")
+            st.success(f"⚡ Đã đọc file '{u_file.name}'. Hệ thống tự động lọc 3 cột: [Thời gian, tempKK, humiKK]!")
             
-            with st.expander("🔍 XEM FILE SAU KHI ĐỒNG BỘ KEY HỆ THỐNG", expanded=False):
+            with st.expander("🔍 XEM FILE SAU KHI LỌC SẠCH DỮ LIỆU", expanded=False):
                 st.dataframe(df_up.head(5), use_container_width=True)
                 
             cols = list(df_up.columns)
             
-            # Gán cứng vị trí gợi ý trỏ thẳng vào Key tiếng Việt đã đồng bộ hóa
-            detected_time = "Thời gian" if "Thời gian" in cols else cols[0]
-            detected_temp = "Nhiệt độ" if "Nhiệt độ" in cols else cols[1]
-            detected_humi = "Độ ẩm" if "Độ ẩm" in cols else cols[2]
-
-            st.markdown("<div class='upload-header'>🛠️ 3. ĐỒNG BỘ KHỚP CỘT DỮ LIỆU</div>", unsafe_allow_html=True)
-            cc1, cc2, cc3 = st.columns(3)
-            with cc1: c_time = st.selectbox("Thời gian:", cols, index=cols.index(detected_time) if detected_time in cols else 0)
-            with cc2: c_temp = st.selectbox("Nhiệt độ:", cols, index=cols.index(detected_temp) if detected_temp in cols else 0)
-            with cc3: c_humi = st.selectbox("Độ ẩm:", cols, index=cols.index(detected_humi) if detected_humi in cols else 0)
+            # Khóa cứng (Hardcode) cấu hình gán cột vì file đã được xử lý tối giản hóa thành công
+            c_time = "Thời gian"
+            c_temp = "tempKK"
+            c_humi = "humiKK"
 
             df_rc = process_data_columns(df_up, c_time, c_temp, c_humi)
             
             if df_rc.empty:
-                st.error("⚠️ Không tìm thấy hoặc lỗi định dạng dữ liệu Nhiệt độ/Độ ẩm!")
+                st.error("⚠️ Không tìm thấy hoặc lỗi định dạng dữ liệu Nhiệt độ/Độ ẩm từ các trạm Không khí!")
                 st.stop()
 
             av_dates = df_rc["only_date"].unique()
