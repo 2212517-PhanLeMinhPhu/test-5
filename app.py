@@ -6,6 +6,7 @@ import sys
 import os
 import altair as alt
 import numpy as np
+import time
 
 # Tự động tìm kiếm module ở thư mục hiện tại
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -169,7 +170,6 @@ def trigger_new_data(v_min, v_max):
             "Trạng thái": status_text
         })
         
-        # Cắt tỉa lịch sử tối đa 1000 records
         MAX_HISTORY = 1000
         if len(st.session_state.history) > MAX_HISTORY:
             st.session_state.history = st.session_state.history[:MAX_HISTORY]
@@ -201,9 +201,7 @@ def trigger_new_data(v_min, v_max):
         print(f"Error triggering data: {e}")
 
 # --- CACHE DATA ĐỂ TỐI ƯU ---
-@st.cache_data(show_spinner=False, max_entries=2)
 def load_and_parse_uploaded_file(file_obj, file_name):
-    """Cache quá trình đọc file thô"""
     if file_name.endswith('.json'):
         j_data = json.load(file_obj)
         if isinstance(j_data, dict) and not isinstance(list(j_data.values())[0], (dict, list)):
@@ -215,7 +213,6 @@ def load_and_parse_uploaded_file(file_obj, file_name):
 
 @st.cache_data(show_spinner="Đang đồng bộ và tính toán dữ liệu (Cache)...")
 def process_data_columns(df_raw, c_time, c_temp, c_humi):
-    """Cache quá trình ép kiểu và xử lý toán học cho khung dữ liệu lớn"""
     df = pd.DataFrame()
     df["datetime_internal"] = pd.to_datetime(
         df_raw[c_time].astype(str).str.strip(), 
@@ -282,16 +279,8 @@ def render_sidebar_controls():
             disabled=st.session_state.is_running
         )
 
-    run_interval = 1 if st.session_state.is_running else 999999
-    
-    @st.fragment(run_every=run_interval)
     def live_monitor():
         v_min, v_max = st.session_state.vpd_range_val
-        if st.session_state.is_running:
-            st.session_state.countdown -= 1
-            if st.session_state.countdown < 0: 
-                trigger_new_data(v_min, v_max)
-                st.rerun()
                 
         if st.session_state.is_running: 
             st.caption(f"⏳ Đổi số sau: **{st.session_state.countdown}s**")
@@ -332,37 +321,4 @@ def render_sidebar_controls():
                     trnd, t_tp = "Ổn định", "normal"
                 
                 if t_tp == "danger_red": 
-                    st.markdown(f"<div class='danger-box-red'>🚨 {trnd}</div>", unsafe_allow_html=True)
-                elif t_tp == "danger_blue": 
-                    st.markdown(f"<div class='danger-box-blue'>🚨 {trnd}</div>", unsafe_allow_html=True)
-                    
-                st.markdown(f"**VPD:** <span style='color:{color};font-weight:bold;font-size:16px;'>{v_res:.2f} kPa</span> ({lbl})", unsafe_allow_html=True)
-                
-                sol = get_quick_solution(v_res, v_min, v_max, c_sim.hour)
-                st.markdown(f"**Biện pháp:** _{sol}_")
-                
-                if t_tp not in ["danger_red", "danger_blue"]: 
-                    st.markdown(f"**Dự báo:** {trnd}")
-                    
-    live_monitor()
-
-def render_realtime_analytics_panel():
-    st.markdown("<h3 style='color:#2E7D32;font-size:18px;'>📊 TRUNG TÂM PHÂN TÍCH CHU KỲ REALTIME</h3>", unsafe_allow_html=True)
-    if not st.session_state.history:
-        st.info("Chưa có số liệu. Vui lòng nhấn nút Bắt đầu để tải.")
-        return
-        
-    u_days = list(dict.fromkeys(r["Ngày"] for r in st.session_state.history))
-    f1, f2 = st.columns([7, 3])
-    sel_day = f1.selectbox("Lọc ngày:", u_days, label_visibility="collapsed")
-    if f2.button("🗑️ Reset All", use_container_width=True):
-        st.session_state.update({
-            "stt_counter": 0, 
-            "history": [], 
-            "simulated_time": "2026-05-24 07:00:00", 
-            "is_completed": False, 
-            "is_running": False
-        })
-        st.rerun()
-
-    df_all = pd.DataFrame(st.session_state.history)
+                    st.markdown(f"<div class='danger-box-red'>🚨 {trnd}</div>",
