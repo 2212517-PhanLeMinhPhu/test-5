@@ -65,14 +65,15 @@ st.markdown("""
 # --- HÀM BỔ TRỢ GIAO DIỆN ---
 def style_status_rows(row):
     styles = [''] * len(row)
-    idx = row.index.get_loc('Trạng thái')
-    status = str(row['Trạng thái'])
-    if "Lý tưởng" in status:
-        styles[idx] = 'background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'
-    elif "Quá khô" in status:
-        styles[idx] = 'background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'
-    elif "Quá ẩm" in status:
-        styles[idx] = 'background-color: #E3F2FD; color: #0D47A1; font-weight: bold;'
+    if 'Trạng thái' in row.index:
+        idx = row.index.get_loc('Trạng thái')
+        status = str(row['Trạng thái'])
+        if "Lý tưởng" in status:
+            styles[idx] = 'background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'
+        elif "Quá khô" in status:
+            styles[idx] = 'background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'
+        elif "Quá ẩm" in status:
+            styles[idx] = 'background-color: #E3F2FD; color: #0D47A1; font-weight: bold;'
     return styles
 
 def setup_next_day():
@@ -258,18 +259,27 @@ with tab_past:
 
     if u_file:
         try:
+            # 1. Đọc file thô từ bộ nhớ
             if u_file.name.endswith('.json'):
                 j_data = json.load(u_file)
                 df_up = pd.DataFrame([j_data]) if isinstance(j_data, dict) and not isinstance(list(j_data.values())[0], (dict, list)) else pd.DataFrame(j_data)
-            elif u_file.name.endswith('.csv'): df_up = pd.read_csv(u_file)
-            else: df_up = pd.read_excel(u_file)
+            elif u_file.name.endswith('.csv'): 
+                df_up = pd.read_csv(u_file)
+            else: 
+                df_up = pd.read_excel(u_file)
+            
+            # 🔥 TÍNH NĂNG MỚI: BỘ THẨM ĐỊNH DỮ LIỆU THÔ (DATA INSPECTOR)
+            st.success(f"⚡ Đã đọc thành công file '{u_file.name}' với {len(df_up)} dòng dữ liệu thô!")
+            with st.expander("🔍 BẤM VÀO ĐÂY ĐỂ XEM FILE THÔ CỦA BẠN (Kiểm tra tên cột)", expanded=True):
+                st.markdown("**3 dòng đầu tiên trong file hệ thống đọc được:**")
+                st.dataframe(df_up.head(3), use_container_width=True)
                 
-            # 🔥 NÂNG CẤP BẢO MẬT: Thuật toán quét và gán nhãn cột tự động dựa trên từ khóa mở rộng
             cols = list(df_up.columns)
             detected_time = cols[0] if len(cols) > 0 else None
             detected_temp = cols[1] if len(cols) > 1 else None
             detected_humi = cols[2] if len(cols) > 2 else None
             
+            # Quét tìm từ khóa thông minh
             for c in cols:
                 cl = str(c).lower().strip()
                 if any(k in cl for k in ['time', 'thời gian', 'giờ', 'gio', 'date', 'timestamp', 'created_at']):
@@ -279,32 +289,35 @@ with tab_past:
                 elif any(k in cl for k in ['hum', 'humidity', 'độ ẩm', 'do am', 'rh', 'h1']):
                     detected_humi = c
 
-            # 🔥 ĐẶC TÍNH MỚI: Cung cấp menu chỉnh sửa thủ công ngay trên giao diện nếu đồ thị bị trống
-            with st.expander("🛠️ CẤU HÌNH NHẬN DIỆN CỘT TRONG FILE (Bấm vào đây nếu đồ thị báo trống)", expanded=False):
-                st.info("Hệ thống đã tự động chọn các cột bên dưới. Nếu dữ liệu lên sai hoặc trống, hãy chọn lại đúng tên cột trong file của bạn.")
-                c_time = st.selectbox("Cột chứa Thời gian:", cols, index=cols.index(detected_time) if detected_time in cols else 0)
-                c_temp = st.selectbox("Cột chứa Nhiệt độ:", cols, index=cols.index(detected_temp) if detected_temp in cols else (1 if len(cols) > 1 else 0))
-                c_humi = st.selectbox("Cột chứa Độ ẩm:", cols, index=cols.index(detected_humi) if detected_humi in cols else (2 if len(cols) > 2 else 0))
+            st.markdown("<div class='upload-header'>🛠️ 3. ĐỒNG BỘ KHỚP CỘT DỮ LIỆU</div>", unsafe_allow_html=True)
+            cc1, cc2, cc3 = st.columns(3)
+            with cc1: c_time = st.selectbox("Cột chứa Thời gian:", cols, index=cols.index(detected_time) if detected_time in cols else 0)
+            with cc2: c_temp = st.selectbox("Cột chứa Nhiệt độ:", cols, index=cols.index(detected_temp) if detected_temp in cols else (1 if len(cols) > 1 else 0))
+            with cc3: c_humi = st.selectbox("Cột chứa Độ ẩm:", cols, index=cols.index(detected_humi) if detected_humi in cols else (2 if len(cols) > 2 else 0))
 
-            time_series = df_up[c_time].astype(str).str.strip()
-            def fix_iot_time_format(val):
-                if " " in val:
-                    parts = val.split(" ")
-                    if len(parts) == 2 and "-" in parts[1]:
-                        return f"{parts[0]} {parts[1].replace('-', ':')}"
-                return val
-            time_series = time_series.apply(fix_iot_time_format)
-            
+            # Trích xuất dữ liệu và ép kiểu an toàn (Không dropna mù quáng)
             df_rc = pd.DataFrame()
-            df_rc["datetime_internal"] = pd.to_datetime(time_series, errors='coerce').fillna(datetime.now())
-            df_rc["Nhiệt độ (°C)"] = pd.to_numeric(df_up[c_temp], errors='coerce').apply(lambda x: x / 10.0 if pd.notna(x) and x >= 45.0 else x)
-            df_rc["Độ ẩm (%)"] = pd.to_numeric(df_up[c_humi], errors='coerce').apply(lambda x: x / 100.0 if pd.notna(x) and x > 100.0 else x)
+            df_rc["datetime_internal"] = pd.to_datetime(df_up[c_time].astype(str).str.strip(), errors='coerce')
+            df_rc["Nhiệt độ (°C)"] = pd.to_numeric(df_up[c_temp], errors='coerce')
+            df_rc["Độ ẩm (%)"] = pd.to_numeric(df_up[c_humi], errors='coerce')
             
-            # 🔥 SỬA LỖI TRỐNG DỮ LIỆU: Nới lỏng bộ lọc Độ ẩm xuống >= 0 và xử lý dữ liệu hệ thập phân (0.0 -> 1.0)
-            df_rc = df_rc.dropna(subset=["Nhiệt độ (°C)", "Độ ẩm (%)"]).sort_values("datetime_internal")
-            if len(df_rc) > 0 and df_rc["Độ ẩm (%)"].max() <= 1.0:
+            # Kiểm tra nếu ép kiểu thất bại hàng loạt
+            if df_rc["Nhiệt độ (°C)"].isna().all() or df_rc["Độ ẩm (%)"].isna().all():
+                st.error("⚠️ Không thể chuyển đổi cột Nhiệt độ hoặc Độ ẩm sang dạng số! Hãy kiểm tra và chọn lại đúng tên cột ở phần 'ĐỒNG BỘ KHỚP CỘT' phía trên.")
+                st.stop()
+            
+            # Điền khuyết tật thời gian nếu lỗi parse
+            df_rc["datetime_internal"] = df_rc["datetime_internal"].fillna(method='ffill').fillna(datetime.now())
+            
+            # Khử lỗi chia 10 của một số cảm biến IoT công nghiệp và tự động quy đổi thập phân (0.85 -> 85%)
+            df_rc["Nhiệt độ (°C)"] = df_rc["Nhiệt độ (°C)"].apply(lambda x: x / 10.0 if pd.notna(x) and x >= 55.0 else x)
+            
+            valid_humi = df_rc["Độ ẩm (%)"].dropna()
+            if len(valid_humi) > 0 and valid_humi.max() <= 1.05:
                 df_rc["Độ ẩm (%)"] = df_rc["Độ ẩm (%)"] * 100.0
-            df_rc = df_rc[df_rc["Độ ẩm (%)"] > 1.0]
+            
+            # Giữ lại các dòng không rỗng hoàn toàn để xử lý đồ thị
+            df_rc = df_rc.dropna(subset=["Nhiệt độ (°C)", "Độ ẩm (%)"]).sort_values("datetime_internal")
 
             if len(df_rc) > 0:
                 df_rc["VPD_raw"] = df_rc.apply(lambda r: calculate_vpd(r["Nhiệt độ (°C)"], r["Độ ẩm (%)"]), axis=1)
@@ -333,6 +346,7 @@ with tab_past:
                 u_days_f = df_rc["only_date"].nunique()
                 df_rs = df_rc[["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw"]].copy().set_index("datetime_internal")
                 
+                # Tạo cơ chế Resample an toàn không drop dữ liệu
                 if any(k in t_filter for k in ["1 Tuần gần nhất", "1 Tháng gần nhất", "ngày"]):
                     df_rs = df_rs.resample("1D").mean().dropna()
                 elif "Xem toàn bộ dữ liệu gốc" in t_filter:
@@ -349,13 +363,17 @@ with tab_past:
                 df_rs = pd.DataFrame(columns=["datetime_internal", "Nhiệt độ (°C)", "Độ ẩm (%)", "VPD_raw", "Hiển thị Giờ"])
 
             df_p = pd.DataFrame()
-            df_p["datetime_internal"] = df_rs["datetime_internal"]
-            df_p["Nhiệt độ (°C)"] = df_rs["Nhiệt độ (°C)"].round(2)
-            df_p["Độ ẩm (%)"] = df_rs["Độ ẩm (%)"].round(2)
-            df_p["Hiển thị Giờ"] = df_rs["Hiển thị Giờ"]
-            df_p["VPD (kPa)"] = df_rs["VPD_raw"].round(2) if u_days_f > 2 else df_p.apply(lambda r: round(calculate_vpd(r["Nhiệt độ (°C)"], r["Độ ẩm (%)"]), 2), axis=1)
-            df_p["Ngày"] = "Dữ liệu File"
-            df_p["Trạng thái"] = df_p["VPD (kPa)"].apply(lambda x: "⚠️ Quá ẩm" if x < f_min else ("✅ Lý tưởng" if x <= f_max else "🚨 Quá khô"))
+            if len(df_rs) > 0:
+                df_p["datetime_internal"] = df_rs["datetime_internal"]
+                df_p["Nhiệt độ (°C)"] = df_rs["Nhiệt độ (°C)"].round(2)
+                df_p["Độ ẩm (%)"] = df_rs["Độ ẩm (%)"].round(2)
+                df_p["Hiển thị Giờ"] = df_rs["Hiển thị Giờ"]
+                df_p["VPD (kPa)"] = df_rs["VPD_raw"].round(2)
+                df_p["Ngày"] = "Dữ liệu File"
+                df_p["Trạng thái"] = df_p["VPD (kPa)"].apply(lambda x: "⚠️ Quá ẩm" if x < f_min else ("✅ Lý tưởng" if x <= f_max else "🚨 Quá khô"))
+            else:
+                st.warning("⚠️ Sau khi áp dụng bộ lọc thời gian, không có dữ liệu nào khớp. Hãy thử chọn 'Xem toàn bộ dữ liệu gốc'.")
+                st.stop()
             
             # --- KHỐI THỐNG KÊ (KPIs) ---
             st.markdown("<div style='margin-top:15px;margin-bottom:5px;font-weight:bold;color:#1A5276;'>📊 TỔNG QUAN CHU KỲ GỘP</div>", unsafe_allow_html=True)
