@@ -2,8 +2,9 @@ import altair as alt
 import pandas as pd
 
 def draw_vpd_chart(df, vpd_min, vpd_max):
+    # SỬA LỖI TẠI ĐÂY: Thay mark_blank() bằng cách trả về khung chữ thông báo trống
     if df.empty:
-        return alt.Chart(pd.DataFrame()).mark_blank()
+        return alt.Chart(pd.DataFrame({'text': ['Không có dữ liệu']})).mark_text().encode(text='text:N')
     
     df_chart = df.copy()
     
@@ -59,8 +60,9 @@ def draw_vpd_chart(df, vpd_min, vpd_max):
 
 
 def draw_weather_combined_chart(df):
+    # SỬA LỖI TẠI ĐÂY: Thay mark_blank() bằng cách trả về khung chữ thông báo trống
     if df.empty: 
-        return alt.Chart(pd.DataFrame()).mark_blank()
+        return alt.Chart(pd.DataFrame({'text': ['Không có dữ liệu']})).mark_text().encode(text='text:N')
     
     use_thinning = len(df) > 30
     x_axis = alt.X(
